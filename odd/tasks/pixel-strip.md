@@ -21,7 +21,7 @@ Branch: `feat/chat-translator` · Delivery: `ask-on-risk` · Test runner: Vitest
 | ID | Specs | Task | Route | Status | Commit |
 |----|-------|------|-------|--------|--------|
 | P1 | S3 | Protocol module in JS: encoder (for tests) + decoder from sampled cell colors (calibration, marker, checksum, UTF-8 fields) | inline | done: 8 round-trip tests (links, accents, emoji, noise, gamma, bad marker, checksum, seq wrap, truncation) GREEN | |
-| P2 | S1, S3 | Addon: strip renderer (pixel-exact cells, queue + hold, payload) replacing the OCR panel | inline | pending | |
+| P2 | S1, S3 | Addon: strip renderer (pixel-exact cells, queue + hold, payload) replacing the OCR panel | inline | done: Lua encoder == JS encoder on all 384 cells (fengari cross-check), JS decodes the Lua frame exactly incl. a real |cnIQ1 link; idle frame; needs in-game check | |
 | P3 | S4 | Capture worker: locate the WoW client area, sample cell centers fast, emit raw colors on change | inline | pending | |
 | P4 | S2, S4 | App: feed decoded messages into the existing pipeline; retire OCR panel calibration/dock UI | inline | pending | |
 | P5 | S1-S5 | Live verification in game (exactness, latency, CPU) | inline | pending | |

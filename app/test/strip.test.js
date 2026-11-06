@@ -52,3 +52,10 @@ describe("strip protocol", () => {
     expect(back.cls).toBeNull();
   });
 });
+
+describe("strip idle frame", () => {
+  it("decodes an empty payload as an alive strip with no message", () => {
+    const frame = encodeFrame(42, new Uint8Array(0));
+    expect(decodeFrame(toColors(frame))).toEqual({ seq: 42, message: null });
+  });
+});

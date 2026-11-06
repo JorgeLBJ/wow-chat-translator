@@ -156,6 +156,8 @@ export function decodeFrame(colors) {
 
   const [s1, s2] = checksum(bytes);
   if (s1 !== expected[0] || s2 !== expected[1]) return null;
+  // Empty payload = idle frame: the addon is running but has no message to send.
+  if (length === 0) return { seq, message: null };
   const message = parsePayload(bytes);
   return message ? { seq, message } : null;
 }

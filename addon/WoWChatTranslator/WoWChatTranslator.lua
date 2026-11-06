@@ -1,21 +1,25 @@
--- WoW Chat Translator: OCR feed panel.
--- Each incoming chat message is rendered as one plain line:
---   NNN Channel CLASS Player Name: message
--- CLASS is the English class file name (MAGE, WARLOCK...) or NOCLASS when unknown.
--- Channel is always one word; brackets were dropped because OCR misreads them.
--- NNN is a sequence number (000-999) the companion app uses to detect new lines.
+-- WoW Chat Translator: pixel strip.
+-- Each incoming chat message is sent to the companion app as a small grid of colored
+-- cells at the top-left of the screen, which the app decodes exactly (no OCR).
+-- The format must match app/src/core/strip.js (see that file for the layout); its
+-- design is informed by Parley's documented protocol (MIT) and LibSerpix (MIT).
 
 local ADDON = ...
 
 local DEFAULTS = {
   shown = true,
-  locked = false,
-  point = { "BOTTOMRIGHT", "UIParent", "BOTTOMRIGHT", -20, 120 },
-  width = 520,
-  height = 200,
-  fontSize = 18,
+  cell = 2, -- physical pixels per cell side
+  hold = 0.1, -- seconds each message stays on screen
   skipOwn = true,
 }
+
+local COLS, ROWS = 64, 6
+local CELLS = COLS * ROWS
+local MARKER = { { 15, 0, 8 }, { 0, 15, 15 }, { 15, 8, 0 }, { 3, 0, 15 } }
+local CAL, SEQ, LEN, SUM, DATA = 4, 20, 21, 22, 24
+local MAX_PAYLOAD = math.floor((CELLS - DATA) * 3 / 2)
+local SEP = "\31" -- unit separator
+local VERSION = "v1"
 
 local EVENT_CHANNEL = {
   CHAT_MSG_SAY = "Say",
@@ -33,14 +37,11 @@ local EVENT_CHANNEL = {
   CHAT_MSG_CHANNEL = false, -- resolved from the channel name
 }
 
-local seq = 0
 local db
 
--- Removes color codes, hyperlinks, textures and raid icons so OCR sees plain text.
--- Links are written as "< Name >" with spaces, and two links in a row are separated
--- by a space: in OCR tests "<" and ">" were read correctly every time, while "]" at a
--- line end or between two links was misread or dropped. The app uses these markers
--- to keep link names untranslated and shows them as "[Name]".
+-- Text cleanup ----------------------------------------------------------------
+-- Removes color codes, textures and raid icons. Links keep their "[Name]" text; the
+-- app uses the brackets to keep link names untranslated.
 local function sanitize(text)
   text = text:gsub("|c%x%x%x%x%x%x%x%x", "")
   text = text:gsub("|cn[^:]*:", "") -- named colors, e.g. item quality "|cnIQ1:"
@@ -50,8 +51,7 @@ local function sanitize(text)
   text = text:gsub("|A.-|a", "")
   text = text:gsub("{.-}", "")
   text = text:gsub("|", "/")
-  text = text:gsub("%[%s*([^%[%]]-)%s*%]", "< %1 >")
-  text = text:gsub(">%s*<", "> <")
+  text = text:gsub(SEP, " ")
   text = text:gsub("%s+", " ")
   return strtrim(text)
 end
@@ -74,104 +74,154 @@ local function channelLabel(event, channelBaseName)
   return base ~= "" and base or "Channel"
 end
 
--- Panel ---------------------------------------------------------------
-
-local panel = CreateFrame("Frame", "WoWChatTranslatorPanel", UIParent)
-panel:SetFrameStrata("MEDIUM")
-panel:SetClampedToScreen(true)
-panel:Hide()
-
-local bg = panel:CreateTexture(nil, "BACKGROUND")
-bg:SetAllPoints()
-bg:SetColorTexture(0, 0, 0, 1)
-
-local feed = CreateFrame("ScrollingMessageFrame", nil, panel)
-feed:SetPoint("TOPLEFT", 8, -6)
-feed:SetPoint("BOTTOMRIGHT", -8, 6)
-feed:SetFading(false)
-feed:SetMaxLines(50)
-feed:SetInsertMode("BOTTOM")
-feed:SetJustifyH("LEFT")
-feed:SetShadowOffset(0, 0)
-
--- Resize grip (bottom-right). Hidden while locked so OCR never sees it.
-local grip = CreateFrame("Button", nil, panel)
-grip:SetSize(16, 16)
-grip:SetPoint("BOTTOMRIGHT", -2, 2)
-grip:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
-grip:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
-grip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
-
-panel:SetResizable(true)
-if panel.SetResizeBounds then
-  panel:SetResizeBounds(200, 60, 1600, 900)
-elseif panel.SetMinResize then
-  panel:SetMinResize(200, 60)
-end
-
-local function savePosition()
-  local point, _, relPoint, x, y = panel:GetPoint(1)
-  db.point = { point, "UIParent", relPoint, x, y }
-  db.width, db.height = panel:GetSize()
-end
-
-grip:SetScript("OnMouseDown", function()
-  if not db.locked then
-    panel:StartSizing("BOTTOMRIGHT")
-  end
-end)
-grip:SetScript("OnMouseUp", function()
-  panel:StopMovingOrSizing()
-  savePosition()
-end)
-
-local function applyLayout()
-  panel:ClearAllPoints()
-  local p = db.point
-  panel:SetPoint(p[1], UIParent, p[3], p[4], p[5])
-  panel:SetSize(db.width, db.height)
-  feed:SetFont("Fonts\\ARIALN.TTF", db.fontSize, "")
-  panel:EnableMouse(not db.locked)
-  grip:SetShown(not db.locked)
-  panel:SetShown(db.shown)
-end
-
-panel:SetMovable(true)
-panel:RegisterForDrag("LeftButton")
-panel:SetScript("OnDragStart", function(self)
-  if not db.locked then
-    self:StartMoving()
-  end
-end)
-panel:SetScript("OnDragStop", function(self)
-  self:StopMovingOrSizing()
-  savePosition()
-end)
-
 local function classOf(guid)
   if type(guid) ~= "string" or guid == "" or not GetPlayerInfoByGUID then
-    return "NOCLASS"
+    return ""
   end
   local ok, _, englishClass = pcall(GetPlayerInfoByGUID, guid)
-  if ok and type(englishClass) == "string" and englishClass ~= "" then
+  if ok and type(englishClass) == "string" then
     return englishClass
   end
-  return "NOCLASS"
+  return ""
 end
+
+-- Encoding ---------------------------------------------------------------------
+
+-- Cuts a byte string to max bytes without leaving a broken UTF-8 sequence at the end.
+local function cutUtf8(s, max)
+  if #s <= max then
+    return s
+  end
+  s = s:sub(1, max)
+  for i = #s, math.max(1, #s - 3), -1 do
+    local b = s:byte(i)
+    if b < 128 then
+      break
+    elseif b >= 192 then
+      local need = (b >= 240 and 4) or (b >= 224 and 3) or 2
+      if #s - i + 1 < need then
+        s = s:sub(1, i - 1)
+      end
+      break
+    end
+  end
+  return s
+end
+
+local function to12(v)
+  return { math.floor(v / 256) % 16, math.floor(v / 16) % 16, v % 16 }
+end
+
+local function encodeFrame(seq, payload)
+  local cells = {}
+  for i = 0, CELLS - 1 do
+    cells[i] = { 0, 0, 0 }
+  end
+  for i = 1, #MARKER do
+    cells[i - 1] = MARKER[i]
+  end
+  for i = 0, 15 do
+    cells[CAL + i] = { i, i, i }
+  end
+  cells[SEQ] = to12(seq % 4096)
+  cells[LEN] = to12(#payload)
+  local s1, s2 = 0, 0
+  for i = 1, #payload do
+    s1 = (s1 + payload:byte(i)) % 4095
+    s2 = (s2 + s1) % 4095
+  end
+  cells[SUM] = to12(s1)
+  cells[SUM + 1] = to12(s2)
+  local nibbles = {}
+  for i = 1, #payload do
+    local b = payload:byte(i)
+    nibbles[#nibbles + 1] = math.floor(b / 16)
+    nibbles[#nibbles + 1] = b % 16
+  end
+  for i = 1, #nibbles, 3 do
+    cells[DATA + (i - 1) / 3] = { nibbles[i], nibbles[i + 1] or 0, nibbles[i + 2] or 0 }
+  end
+  return cells
+end
+
+-- Strip ------------------------------------------------------------------------
+
+local strip = CreateFrame("Frame", "WoWChatTranslatorStrip", UIParent)
+strip:SetFrameStrata("TOOLTIP")
+-- Size the cells in physical pixels, whatever the UI scale is.
+if strip.SetIgnoreParentScale then
+  strip:SetIgnoreParentScale(true)
+end
+strip:SetScale(1)
+
+local textures = {}
+for i = 0, CELLS - 1 do
+  local t = strip:CreateTexture(nil, "ARTWORK")
+  if t.SetSnapToPixelGrid then
+    t:SetSnapToPixelGrid(false)
+    t:SetTexelSnappingBias(0)
+  end
+  textures[i] = t
+end
+
+local function layout()
+  local _, physicalHeight = GetPhysicalScreenSize()
+  local unit = 768 / physicalHeight -- one physical pixel in UI units at scale 1
+  local size = db.cell * unit
+  strip:ClearAllPoints()
+  strip:SetPoint("TOPLEFT", UIParent, "TOPLEFT", 0, 0)
+  strip:SetSize(COLS * size, ROWS * size)
+  for i = 0, CELLS - 1 do
+    local t = textures[i]
+    t:ClearAllPoints()
+    t:SetPoint("TOPLEFT", strip, "TOPLEFT", (i % COLS) * size, -math.floor(i / COLS) * size)
+    t:SetSize(size, size)
+  end
+  strip:SetShown(db.shown)
+end
+
+local function draw(cells)
+  for i = 0, CELLS - 1 do
+    local c = cells[i]
+    textures[i]:SetColorTexture(c[1] / 15, c[2] / 15, c[3] / 15, 1)
+  end
+end
+
+-- Queue: each message is drawn for db.hold seconds, then the next one. With nothing
+-- queued the last frame stays (the app ignores a sequence number it already read).
+-- An empty payload is the idle frame: it tells the app the addon is running.
+local queue = {}
+local seq = math.random(0, 4095)
+local shownAt = 0
+
+local function showNext()
+  local payload = table.remove(queue, 1)
+  seq = (seq + 1) % 4096
+  draw(encodeFrame(seq, payload))
+  shownAt = GetTime()
+end
+
+strip:SetScript("OnUpdate", function()
+  if #queue > 0 and GetTime() - shownAt >= db.hold then
+    showNext()
+  end
+end)
 
 local function push(channel, class, player, message)
   local clean = sanitize(message)
   if clean == "" then
     return
   end
-  seq = (seq + 1) % 1000
-  feed:AddMessage(string.format("%03d %s %s %s: %s", seq, channel, class, player, clean), 1, 1, 1)
+  local payload = table.concat({ VERSION, channel, class, player, clean }, SEP)
+  queue[#queue + 1] = cutUtf8(payload, MAX_PAYLOAD)
 end
 
--- Events --------------------------------------------------------------
+-- Events -------------------------------------------------------------------------
 
 local events = CreateFrame("Frame")
 events:RegisterEvent("ADDON_LOADED")
+events:RegisterEvent("DISPLAY_SIZE_CHANGED")
+events:RegisterEvent("UI_SCALE_CHANGED")
 
 events:SetScript("OnEvent", function(_, event, ...)
   if event == "ADDON_LOADED" then
@@ -185,10 +235,18 @@ events:SetScript("OnEvent", function(_, event, ...)
       end
     end
     db = WCT_DB
-    applyLayout()
+    layout()
+    queue[1] = "" -- idle frame
+    showNext()
     for chatEvent in pairs(EVENT_CHANNEL) do
       -- Some events do not exist on every client; ignore those.
       pcall(events.RegisterEvent, events, chatEvent)
+    end
+    return
+  end
+  if event == "DISPLAY_SIZE_CHANGED" or event == "UI_SCALE_CHANGED" then
+    if db then
+      layout()
     end
     return
   end
@@ -209,7 +267,7 @@ events:SetScript("OnEvent", function(_, event, ...)
   push(channelLabel(event, channelBaseName), classOf(guid), player, text)
 end)
 
--- Slash commands ------------------------------------------------------
+-- Slash commands -------------------------------------------------------------------
 
 local SAMPLES = {
   { "Trade", "MAGE", "Kaelthas", "WTS |cffa335ee|Hitem:12360::::::::|h[Arcanite Bar]|h|r 40g pst" },
@@ -217,7 +275,7 @@ local SAMPLES = {
   { "Say", "WARRIOR", "Brunhilde", "anyone know where the trainer is?" },
   { "Guild", "SHAMAN", "Pedrinho", "bora fazer raid hoje à noite" },
   { "Party", "WARLOCK", "Schatten", "ich brauche noch Mana, kurz warten {rt1}" },
-  { "General", "NOCLASS", "Volkov", "LFM ZG need heal" },
+  { "General", "", "Volkov", "lol LFM ZG need heal" },
 }
 
 local function say(msg)
@@ -229,11 +287,13 @@ SlashCmdList.WOWCHATTRANSLATOR = function(input)
   local cmd, arg = strsplit(" ", strtrim(input or ""):lower(), 2)
   if cmd == "" then
     db.shown = not db.shown
-  elseif cmd == "lock" then
-    db.locked = not db.locked
-    say(db.locked and "panel locked" or "panel unlocked (drag to move, bottom-right corner to resize)")
-  elseif cmd == "size" and tonumber(arg) then
-    db.fontSize = math.max(10, math.min(24, tonumber(arg)))
+    say(db.shown and "strip shown" or "strip hidden (the app pauses)")
+  elseif cmd == "cell" and tonumber(arg) then
+    db.cell = math.max(1, math.min(4, math.floor(tonumber(arg))))
+    say("cell size: " .. db.cell .. " px")
+  elseif cmd == "hold" and tonumber(arg) then
+    db.hold = math.max(0.05, math.min(1, tonumber(arg)))
+    say("hold: " .. db.hold .. " s")
   elseif cmd == "reset" then
     for k, v in pairs(DEFAULTS) do
       db[k] = v
@@ -242,11 +302,10 @@ SlashCmdList.WOWCHATTRANSLATOR = function(input)
     for _, s in ipairs(SAMPLES) do
       push(s[1], s[2], s[3], s[4])
     end
-  elseif cmd == "clear" then
-    feed:Clear()
+    say("6 test messages queued")
   else
-    say("/wct (show/hide) | lock | size <10-24> | reset | test | clear")
+    say("/wct (show/hide) | cell <1-4> | hold <0.05-1> | reset | test")
     return
   end
-  applyLayout()
+  layout()
 end
