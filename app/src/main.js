@@ -17,6 +17,7 @@ import { keyBinding } from "./core/key-binding.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const STRIP_WORKER = path.join(here, "..", "ocr", "strip-worker.ps1");
+const FOCUS_WOW = path.join(here, "..", "ocr", "focus-wow.ps1");
 const DETECT_PANEL = path.join(here, "..", "ocr", "detect-panel.ps1");
 const TARGET_LANG = "es";
 const GAME_EXE = "Wow.exe";
@@ -541,6 +542,20 @@ ipcMain.on("win:resize", (_e, { width, height }) => {
 });
 ipcMain.on("win:resize-end", () => overlay && saveConfig({ overlayBounds: overlay.getBounds() }));
 ipcMain.on("win:blur", () => overlay?.blur());
+// Bring WoW back to the front after the compose box (no keystrokes are sent). The
+// helper is started while this app has the focus, which is what Windows requires.
+ipcMain.on("win:focus-game", () => {
+  execFile("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", FOCUS_WOW], { windowsHide: true }, (err, stdout) => {
+    let ok = false;
+    try {
+      ok = JSON.parse(stdout).ok === true;
+    } catch {
+      // ignore
+    }
+    debug("focus-game", { ok, error: err?.message, out: String(stdout).trim() });
+    if (!ok) overlay?.blur();
+  });
+});
 
 ipcMain.handle("translator:get", () => {
   const s = translatorSettings();

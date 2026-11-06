@@ -28,6 +28,7 @@ contextBridge.exposeInMainWorld("wct", {
   maximize: () => ipcRenderer.send("win:maximize"),
   dock: () => ipcRenderer.send("win:dock"),
   blur: () => ipcRenderer.send("win:blur"),
+  focusGame: () => ipcRenderer.send("win:focus-game"),
   resize: (size) => ipcRenderer.send("win:resize", size),
   resizeEnd: () => ipcRenderer.send("win:resize-end"),
   getPrefs: () => ipcRenderer.invoke("prefs:get"),

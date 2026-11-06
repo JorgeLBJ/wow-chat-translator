@@ -263,7 +263,7 @@ function showPreview(text, kind) {
 input.addEventListener("keydown", async (e) => {
   if (e.key === "Escape") {
     input.blur();
-    window.wct.blur();
+    window.wct.focusGame();
     return;
   }
   if (e.key !== "Enter") return;
@@ -279,7 +279,7 @@ input.addEventListener("keydown", async (e) => {
   showPreview(`✓ Copiado: «${res.text}». En WoW: Enter → Ctrl+V → Enter`, "ok");
   input.value = "";
   input.blur();
-  window.wct.blur();
+  window.wct.focusGame(); // like Parley: WoW comes back to the front, ready for Enter, Ctrl+V, Enter
 });
 
 window.wct.onComposeFocus(() => input.focus());
