@@ -461,3 +461,23 @@ describe("claude code translator executable", () => {
     expect(queryFn.mock.calls[0][0].options.pathToClaudeCodeExecutable).toBe(exe);
   });
 });
+
+describe("item links written with < > by the addon", () => {
+  it("reads < Name > links, including several in a row, as [Name]", () => {
+    expect(tidyLinks("WTS < Runed Copper Bracers > < Heavy Copper Maul > cheap")).toBe("WTS [Runed Copper Bracers] [Heavy Copper Maul] cheap");
+  });
+
+  it("keeps links glued without a space apart", () => {
+    expect(tidyLinks("WTS < A Bar >< B Pouch >")).toBe("WTS [A Bar][B Pouch]");
+  });
+
+  it("does not treat <3 or comparisons typed by players as links", () => {
+    expect(tidyLinks("i <3 this guild > all")).toBe("i <3 this guild > all");
+  });
+
+  it("protects < > links from translation end to end", () => {
+    const { text, links } = protectLinks(tidyLinks("anyone selling < Perfect Deviate Scale >?"));
+    expect(text).toBe("anyone selling [0]?");
+    expect(restoreLinks("¿alguien vende [0]?", links)).toBe("¿alguien vende [Perfect Deviate Scale]?");
+  });
+});

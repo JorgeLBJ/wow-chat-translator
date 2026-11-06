@@ -37,9 +37,10 @@ local seq = 0
 local db
 
 -- Removes color codes, hyperlinks, textures and raid icons so OCR sees plain text.
--- Links keep their "[Name]" text, written as "[ Name ]": with the spaces OCR reads the
--- brackets reliably (without them "]" is often read as "l"), and the app uses the
--- brackets to keep link names untranslated.
+-- Links are written as "< Name >" with spaces, and two links in a row are separated
+-- by a space: in OCR tests "<" and ">" were read correctly every time, while "]" at a
+-- line end or between two links was misread or dropped. The app uses these markers
+-- to keep link names untranslated and shows them as "[Name]".
 local function sanitize(text)
   text = text:gsub("|c%x%x%x%x%x%x%x%x", "")
   text = text:gsub("|cn[^:]*:", "") -- named colors, e.g. item quality "|cnIQ1:"
@@ -49,7 +50,8 @@ local function sanitize(text)
   text = text:gsub("|A.-|a", "")
   text = text:gsub("{.-}", "")
   text = text:gsub("|", "/")
-  text = text:gsub("%[%s*([^%[%]]-)%s*%]", "[ %1 ]")
+  text = text:gsub("%[%s*([^%[%]]-)%s*%]", "< %1 >")
+  text = text:gsub(">%s*<", "> <")
   text = text:gsub("%s+", " ")
   return strtrim(text)
 end

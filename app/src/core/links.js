@@ -10,9 +10,15 @@ const PLACEHOLDER = /\[\s*(\d+)\s*\]/g;
 // versions that did not strip them; OCR may read I as l and drop the colon.
 const COLOR_LEFTOVER = /\/cn[A-Za-z0-9]{2,6}:?\s*/g;
 
+// The addon writes links as "< Name >": Windows OCR reads "<" and ">" reliably, while
+// "]" at a line end or between two links is often misread or dropped (measured).
+// The spaces are required, so "<3" or "> 5g" typed by players are not links.
+const ANGLE_LINK = /<\s+([^<>[\]]+?)\s+>/g;
+
 export function tidyLinks(text) {
   return text
     .replace(COLOR_LEFTOVER, "")
+    .replace(ANGLE_LINK, (_m, name) => `[${name}]`)
     .replace(LINK, (_m, name) => `[${name}]`)
     .replace(/\s{2,}/g, " ")
     .trim();
