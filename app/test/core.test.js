@@ -10,6 +10,7 @@ import { createPresence } from "../src/core/presence.js";
 import { createOpenAICompatibleTranslator, parseLlmReply } from "../src/core/translators/openai-compatible.js";
 import { createFallbackTranslator } from "../src/core/translators/fallback.js";
 import { keyBinding } from "../src/core/key-binding.js";
+import { protectLinks, restoreLinks, tidyLinks, onlyLinks } from "../src/core/links.js";
 
 describe("parseLines", () => {
   it("parses OCR lines in the format NNN Channel Player Name: message", () => {
@@ -325,5 +326,35 @@ describe("keyBinding", () => {
     expect(keyBinding("custom", "https://openrouter.ai/api/v1")).not.toBe(saved);
     expect(keyBinding("openrouter", "https://evil.example/api/v1")).not.toBe(saved);
     expect(keyBinding("lmstudio", "http://localhost:1234/v1")).not.toBe(saved);
+  });
+});
+
+describe("item links", () => {
+  it("tidies the spaced brackets the addon writes for OCR", () => {
+    expect(tidyLinks("wts [ Brazaletes de metal oxidado ] 5g")).toBe("wts [Brazaletes de metal oxidado] 5g");
+  });
+
+  it("replaces links with numbered placeholders and restores them unchanged", () => {
+    const { text, links } = protectLinks("wts [Arcanite Bar] and [Small Black Pouch] cheap");
+    expect(text).toBe("wts [0] and [1] cheap");
+    expect(restoreLinks("vendo [0] y [ 1 ] barato", links)).toBe("vendo [Arcanite Bar] y [Small Black Pouch] barato");
+  });
+
+  it("leaves unknown placeholder numbers alone", () => {
+    expect(restoreLinks("tengo [5]", ["[Bar]"])).toBe("tengo [5]");
+  });
+
+  it("detects a message that is only links (nothing to translate)", () => {
+    expect(onlyLinks("[0]")).toBe(true);
+    expect(onlyLinks(" [0] [1] ! ")).toBe(true);
+    expect(onlyLinks("wts [0]")).toBe(false);
+  });
+});
+
+describe("openai-compatible prompt", () => {
+  it("tells the model to keep link placeholders", async () => {
+    const fetchFn = vi.fn(async () => ({ ok: true, json: async () => ({ choices: [{ message: { content: "LANG: en\nTEXT: vendo [0]" } }] }) }));
+    await createOpenAICompatibleTranslator({ baseUrl: "http://x/v1", model: "m", fetchFn }).translate("wts [0]", "es");
+    expect(JSON.parse(fetchFn.mock.calls[0][1].body).messages[0].content).toContain("[0]");
   });
 });

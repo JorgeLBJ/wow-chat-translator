@@ -15,6 +15,7 @@ import { createCachedTranslator } from "./core/cache.js";
 import { createOpenAICompatibleTranslator } from "./core/translators/openai-compatible.js";
 import { createFallbackTranslator } from "./core/translators/fallback.js";
 import { keyBinding } from "./core/key-binding.js";
+import { onlyLinks, protectLinks, restoreLinks, tidyLinks } from "./core/links.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const WORKER = path.join(here, "..", "ocr", "ocr-worker.ps1");
@@ -120,6 +121,9 @@ let nextId = 1;
 function handleOcrLines(lines) {
   const fresh = tracker.newMessages(parseLines(lines));
   for (const msg of fresh) {
+    msg.text = tidyLinks(msg.text);
+    // Links ([Item], [Spell]...) are never translated: mask them, restore after.
+    const { text: masked, links } = protectLinks(msg.text);
     const item = {
       id: nextId++,
       time: Date.now(),
@@ -132,14 +136,15 @@ function handleOcrLines(lines) {
       lang: null,
       status: "pending",
     };
-    if (looksSpanish(msg.text)) {
+    if (onlyLinks(masked) || looksSpanish(masked)) {
       send("chat:add", { ...item, lang: "es", status: "done" });
       continue;
     }
     send("chat:add", item);
     translator
-      .translate(msg.text, TARGET_LANG)
-      .then((r) => {
+      .translate(masked, TARGET_LANG)
+      .then((res) => {
+        const r = { ...res, text: restoreLinks(res.text, links) };
         const same = r.source === TARGET_LANG || r.text.trim().toLowerCase() === msg.text.trim().toLowerCase();
         send("chat:update", {
           id: item.id,

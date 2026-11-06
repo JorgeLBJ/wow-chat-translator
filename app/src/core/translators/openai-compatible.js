@@ -13,6 +13,7 @@ function systemPrompt(target) {
     "WTB = want to buy, pst = whisper me, inv = invite, ty = thank you, np = no problem, gg = good game,",
     "heal/healer, tank, dps, pally = paladin, lock = warlock, quest = quest/mission, mob = monster.",
     "Keep player names, item names, zone and dungeon names (e.g. ZG, Deadmines, Brill) as they are.",
+    "Tokens like [0], [1], [2] stand for item, spell or quest links: copy them exactly, in a natural position.",
     "Keep the tone and emojis. Never add explanations or notes.",
     "Reply in exactly this format and nothing else:",
     "LANG: <ISO 639-1 code of the original message language>",
