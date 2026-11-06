@@ -30,7 +30,10 @@ public static class WctCapture {
 
   public static Bitmap Grab(int x, int y, int w, int h) {
     var bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb);
-    using (var g = Graphics.FromImage(bmp)) { g.CopyFromScreen(x, y, 0, 0, new Size(w, h)); }
+    using (var g = Graphics.FromImage(bmp)) {
+      g.CopyFromScreen(x, y, 0, 0, new Size(w, h));
+      GameCapture.PaintOver(g, x, y);
+    }
     return bmp;
   }
 
@@ -66,6 +69,40 @@ public static class WctCapture {
       h ^= buf[i + 2]; h *= 1099511628211UL;
     }
     return h;
+  }
+}
+// Captures the World of Warcraft window itself (PrintWindow + PW_RENDERFULLCONTENT)
+// and paints it over a screen capture. Windows draws capture-protected windows (our
+// overlay) as black in screen captures over a DirectX game, so reading the screen
+// under the overlay is unreliable; the game window's own image is not affected.
+public static class GameCapture {
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr FindWindow(string cls, string title);
+  [DllImport("user32.dll")] static extern bool IsWindow(IntPtr h);
+  [DllImport("user32.dll")] static extern bool IsIconic(IntPtr h);
+  [DllImport("user32.dll")] static extern bool PrintWindow(IntPtr h, IntPtr hdc, uint flags);
+  [StructLayout(LayoutKind.Sequential)] struct RECT { public int L, T, R, B; }
+  [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
+  static IntPtr game = IntPtr.Zero;
+
+  // Returns true when the game window was painted over g (whose origin is screen ox, oy).
+  public static bool PaintOver(Graphics g, int ox, int oy) {
+    if (game == IntPtr.Zero || !IsWindow(game)) game = FindWindow(null, "World of Warcraft");
+    if (game == IntPtr.Zero || IsIconic(game)) return false;
+    RECT r;
+    if (!GetWindowRect(game, out r)) return false;
+    int w = r.R - r.L, h = r.B - r.T;
+    if (w <= 0 || h <= 0) return false;
+    using (var win = new Bitmap(w, h, PixelFormat.Format32bppArgb)) {
+      bool ok;
+      using (var wg = Graphics.FromImage(win)) {
+        IntPtr dc = wg.GetHdc();
+        ok = PrintWindow(game, dc, 2);
+        wg.ReleaseHdc(dc);
+      }
+      if (!ok) return false;
+      g.DrawImageUnscaled(win, r.L - ox, r.T - oy);
+    }
+    return true;
   }
 }
 "@

@@ -39,7 +39,10 @@ public static class WctPanel {
 
   public static int[] Detect(int ox, int oy, int sw, int sh, int rx, int ry, int rw, int rh) {
     using (var bmp = new Bitmap(sw, sh, PixelFormat.Format32bppArgb)) {
-      using (var g = Graphics.FromImage(bmp)) g.CopyFromScreen(ox, oy, 0, 0, new Size(sw, sh));
+      using (var g = Graphics.FromImage(bmp)) {
+        g.CopyFromScreen(ox, oy, 0, 0, new Size(sw, sh));
+        GameCapture.PaintOver(g, ox, oy);
+      }
       var data = bmp.LockBits(new Rectangle(0, 0, sw, sh), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
       stride = data.Stride; width = sw; height = sh;
       px = new byte[stride * sh];
@@ -57,6 +60,40 @@ public static class WctPanel {
       if (bottom < height && Panelish(left, bottom, right, bottom + 1)) { bottom++; grew = true; }
     }
     return new int[] { ox + left, oy + top, right - left, bottom - top };
+  }
+}
+// Captures the World of Warcraft window itself (PrintWindow + PW_RENDERFULLCONTENT)
+// and paints it over a screen capture. Windows draws capture-protected windows (our
+// overlay) as black in screen captures over a DirectX game, so reading the screen
+// under the overlay is unreliable; the game window's own image is not affected.
+public static class GameCapture {
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr FindWindow(string cls, string title);
+  [DllImport("user32.dll")] static extern bool IsWindow(IntPtr h);
+  [DllImport("user32.dll")] static extern bool IsIconic(IntPtr h);
+  [DllImport("user32.dll")] static extern bool PrintWindow(IntPtr h, IntPtr hdc, uint flags);
+  [StructLayout(LayoutKind.Sequential)] struct RECT { public int L, T, R, B; }
+  [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
+  static IntPtr game = IntPtr.Zero;
+
+  // Returns true when the game window was painted over g (whose origin is screen ox, oy).
+  public static bool PaintOver(Graphics g, int ox, int oy) {
+    if (game == IntPtr.Zero || !IsWindow(game)) game = FindWindow(null, "World of Warcraft");
+    if (game == IntPtr.Zero || IsIconic(game)) return false;
+    RECT r;
+    if (!GetWindowRect(game, out r)) return false;
+    int w = r.R - r.L, h = r.B - r.T;
+    if (w <= 0 || h <= 0) return false;
+    using (var win = new Bitmap(w, h, PixelFormat.Format32bppArgb)) {
+      bool ok;
+      using (var wg = Graphics.FromImage(win)) {
+        IntPtr dc = wg.GetHdc();
+        ok = PrintWindow(game, dc, 2);
+        wg.ReleaseHdc(dc);
+      }
+      if (!ok) return false;
+      g.DrawImageUnscaled(win, r.L - ox, r.T - oy);
+    }
+    return true;
   }
 }
 "@
