@@ -16,7 +16,7 @@ Branch: `feat/egui-app` (worktree `../wow-chat-translator-worktrees/egui`), new 
 
 | ID | Specs | Task | Route | Status | Commit |
 |----|-------|------|-------|--------|--------|
-| E1 | S2, S4 | `native/` crate: protocol (encode for tests, decode with quadratic calibration fit), strip locator, Win32 capture of the WoW client patch, game-process check; unit tests ported from `app/test/strip.test.js`; a debug binary that prints decoded messages | delegated (context backstop) | pending | |
+| E1 | S2, S4 | `native/` crate: protocol (encode for tests, decode with quadratic calibration fit), strip locator, Win32 capture of the WoW client patch, game-process check; unit tests ported from `app/test/strip.test.js`; a debug binary that prints decoded messages | delegated (context backstop) | done: 15 tests GREEN incl. golden frame identical to JS (384 cells); strip-debug runs; live decode pending (WoW covered by another window during checks) | |
 | E2 | S3 | Core: message pipeline (links, emoji shortcodes, pause/translate-by-id, Spanish heuristic, tabs), prefs/config JSON | pending | pending | |
 | E3 | S3, S5 | Translators: Google, OpenAI-compatible, Anthropic (HTTP), Claude Code (installed CLI), cache + Google fallback; DPAPI-encrypted bound key | pending | pending | |
 | E4 | S3 | Overlay UI in egui (+ tray, autostart, always on top, capture exclusion) | pending | pending | |
@@ -26,3 +26,4 @@ Branch: `feat/egui-app` (worktree `../wow-chat-translator-worktrees/egui`), new 
 ## Log
 
 - **L1** (2026-11-06, user, verbatim): "si, vamos con egui" (prototype) then "ok, si, realizala en otro repo, o como gestionaremos eso". Tauri worktree removed (2.9 GB, branch `feat/tauri-migration` kept); egui worktree created from `feat/chat-translator` at 2312a03. Parent context is past the long-session backstop: implementation units are delegated to bounded writers.
+- **L2** (2026-11-06): E1 delivered by a bounded writer (windows 0.62.2; RED 15/15 failing stubs, then GREEN 15/15). Parent spot check: `cargo test` 15 passed incl. `matches_js_golden_frame`. Live run printed "wow process running: true / no strip visible"; investigation: the strip was drawn in WoW (PrintWindow) but a maximized WebStorm window covered the screen (WindowFromPoint at (5,5) = webstorm64), and the Electron reader also logged "strip absent": correct behavior, live decode still to verify with WoW in front. Risk: item 6 (BitBlt/DPI capture only checked by live runs).

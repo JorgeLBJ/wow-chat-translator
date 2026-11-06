@@ -1,0 +1,19 @@
+[package]
+name = "wow-chat-translator"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["Jorge Luis Bustamante Jara"]
+description = "Native companion app for the WoW chat translator addon"
+
+[lib]
+name = "wow_chat_translator"
+path = "src/lib.rs"
+
+[dependencies]
+
+[dev-dependencies]
+serde_json = "1.0.154"
+
+[target."cfg(windows)".dependencies]
+windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging", "Win32_UI_HiDpi", "Win32_System_Diagnostics_ToolHelp"] }
