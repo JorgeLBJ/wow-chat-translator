@@ -16,7 +16,7 @@ use crate::translators::http::{HttpClient, UreqClient};
 use crate::translators::{build_translator, llm_for, Llm};
 use crate::core::prefs::TranslatorSettings;
 
-use super::autostart;
+use super::{addon_panel, autostart};
 use super::settings_form::{
     form_for_provider, is_llm, key_hint, key_placeholder, load_models, models_message, probe, provider_option_label,
     request_key, save_translator, saved_translator, shows_key, shows_url, validate_form, KeyInput, SavedTranslator,
@@ -32,9 +32,10 @@ pub const TITLE: &str = "Ajustes · WoW Chat Translator";
 const WIDTH: f32 = 500.0;
 const HEIGHT: f32 = 600.0;
 const SHEET_BG: Color32 = Color32::from_rgb(0x0f, 0x14, 0x1d);
-const HINT: Color32 = Color32::from_rgb(0x6b, 0x74, 0x80);
+pub(super) const HINT: Color32 = Color32::from_rgb(0x6b, 0x74, 0x80);
 const OK: Color32 = Color32::from_rgb(0x86, 0xef, 0xac);
 const ERR: Color32 = Color32::from_rgb(0xfc, 0xa5, 0xa5);
+const CAPTURE_NOTE: &str = "Útil para streams: la ventana no saldrá en capturas ni grabaciones.";
 const STRIP_NOTE: &str = "El addon envía el chat como una franja diminuta de colores en la esquina superior izquierda de WoW. No pongas ninguna ventana encima de esa esquina.";
 
 pub fn viewport_id() -> ViewportId {
@@ -66,6 +67,8 @@ pub struct SettingsState {
     busy: bool,
     /// Bumped when the form is reset, so a late job result is dropped.
     generation: u64,
+    /// Display affinity applied to this window (`hideFromCapture`), once known.
+    capture_hidden: Option<bool>,
 }
 
 impl SettingsState {
@@ -81,6 +84,7 @@ impl SettingsState {
             result: None,
             busy: false,
             generation: 0,
+            capture_hidden: None,
         }
     }
 
@@ -116,6 +120,7 @@ pub fn open(ctx: &egui::Context, shared: &Shared, state: &Arc<Mutex<SettingsStat
         return;
     }
     *lock(state) = SettingsState::new(shared);
+    shared.addon().reset();
     shared.set_settings_open(true);
 }
 
@@ -151,6 +156,17 @@ pub fn show(ctx: &egui::Context, shared: Arc<Shared>, state: Arc<Mutex<SettingsS
 }
 
 fn draw(ctx: &egui::Context, shared: &Arc<Shared>, state: &Arc<Mutex<SettingsState>>) {
+    let hide = shared.config().prefs.hide_from_capture && !win::dev_capture();
+    {
+        let mut st = lock(state);
+        if st.capture_hidden != Some(hide) {
+            let h = win::find_own_window(TITLE);
+            if h.is_set() {
+                h.set_capture_hidden(hide);
+                st.capture_hidden = Some(hide);
+            }
+        }
+    }
     let head = egui::TopBottomPanel::top("settings-head")
         .show_separator_line(false)
         .frame(Frame::new().fill(SHEET_BG).inner_margin(Margin { left: 14, right: 8, top: 8, bottom: 0 }))
@@ -412,6 +428,16 @@ fn window_pane(ui: &mut Ui, shared: &Arc<Shared>) {
         }
     });
 
+    let mut hide = prefs.hide_from_capture;
+    row(ui, "Ocultar de las capturas de pantalla", CAPTURE_NOTE, |ui| {
+        if switch(ui, &mut hide).changed() {
+            shared.config().prefs.hide_from_capture = hide;
+            shared.save_config();
+            shared.log.write(&format!("hide from capture {hide}"));
+            shared.repaint();
+        }
+    });
+
     row(ui, "Franja del addon", STRIP_NOTE, |_| {});
 }
 
@@ -437,6 +463,14 @@ fn general_pane(ui: &mut Ui, shared: &Arc<Shared>) {
             shared.clear_messages();
         }
     });
+
+    ui.add_space(6.0);
+    ui.label(RichText::new("Addon").family(widgets::semibold_family()).size(12.5).color(style::TEXT));
+    {
+        let mut panel = shared.addon();
+        addon_panel::panel(ui, shared, &mut panel, addon_panel::Mode::Settings);
+    }
+    separator_line(ui);
 
     ui.add_space(6.0);
     ui.label(RichText::new("Atajo (solo con WoW abierto)").family(widgets::semibold_family()).size(12.0).color(style::TEXT));
@@ -536,7 +570,7 @@ fn stab(ui: &mut Ui, label: &str, on: bool) -> Response {
     resp.on_hover_cursor(CursorIcon::PointingHand)
 }
 
-fn close_button(ui: &mut Ui) -> Response {
+pub(super) fn close_button(ui: &mut Ui) -> Response {
     let (rect, resp) = ui.allocate_exact_size(vec2(28.0, 24.0), Sense::click());
     if resp.hovered() {
         ui.painter().rect_filled(rect, 5.0, style::CLOSE_HOVER);

@@ -192,3 +192,17 @@ fn find_strip_remembers_layout() {
     assert_eq!(hint.map(|l: Layout| l.cell), Some(3));
     assert_eq!(find_strip(&px, W, H, &mut hint).and_then(|f| f.message), Some(msg()));
 }
+
+/// Every WoW client counts as "the game", not only `Wow.exe` (Classic, PTR, Beta),
+/// while helpers and this app (which also starts with "wow") do not.
+#[cfg(windows)]
+#[test]
+fn game_process_names_cover_every_flavor() {
+    use wow_chat_translator::capture::is_wow_client_exe;
+    for exe in ["Wow.exe", "WOW.EXE", "WowClassic.exe", "WowClassicT.exe", "WowClassicB.exe", "WowT.exe", "WowB.exe"] {
+        assert!(is_wow_client_exe(exe), "{exe}");
+    }
+    for exe in ["WowVoiceProxy.exe", "wow-chat-translator.exe", "WowError.exe", "Battle.net.exe"] {
+        assert!(!is_wow_client_exe(exe), "{exe}");
+    }
+}

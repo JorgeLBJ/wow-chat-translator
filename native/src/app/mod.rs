@@ -11,6 +11,8 @@ pub mod settings_form;
 pub mod style;
 
 #[cfg(windows)]
+pub mod addon_panel;
+#[cfg(windows)]
 pub mod autostart;
 #[cfg(windows)]
 pub mod hotkey;

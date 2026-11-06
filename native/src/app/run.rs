@@ -74,9 +74,6 @@ pub fn run() -> eframe::Result {
                 }
             }
             let hwnd = shared.hwnd();
-            if !win::dev_capture() {
-                hwnd.exclude_from_capture();
-            }
             // --hidden: invisible until revealed (eframe shows the window after frame 1).
             hwnd.set_opacity(if started_hidden { 0.0 } else { shared.config().prefs.opacity });
             if let Err(e) = tray::create(shared.clone(), ICON_32) {

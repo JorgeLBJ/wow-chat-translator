@@ -49,6 +49,15 @@ pub struct OverlayApp {
     compose: Compose,
     /// `WCT_DEV_STATE=hover`: draws the first translated row as hovered (screenshots).
     dev_hover: bool,
+    /// `WCT_DEV_STATE=menu`: draws the row context menu on this message (screenshots).
+    dev_menu: Option<u64>,
+    /// `WCT_DEV_STATE=select`: drags the mouse over the first message with synthetic
+    /// input events to select its text (screenshots); the step of that drag.
+    dev_select: Option<u32>,
+    /// Rect of the first message row, as drawn last frame (for `dev_select`).
+    first_row_rect: Option<Rect>,
+    /// Display affinity applied to the window (`hideFromCapture`), once known.
+    capture_hidden: Option<bool>,
 }
 
 /// The compose box: text, EN/ES, the last result line and the running translation.
@@ -83,6 +92,10 @@ impl OverlayApp {
             last_bounds: None,
             bounds_dirty_since: None,
             dev_hover: false,
+            dev_menu: None,
+            dev_select: None,
+            first_row_rect: None,
+            capture_hidden: None,
         }
     }
 
@@ -97,6 +110,9 @@ impl OverlayApp {
             match part.split_once('=') {
                 Some(("settings", pane)) => settings::dev_open(ctx, &self.shared, &self.settings, pane),
                 _ if part == "hover" => self.dev_hover = true,
+                _ if part == "menu" => self.dev_menu = Some(900_001),
+                _ if part == "select" => self.dev_select = Some(0),
+                _ if part == "addon" => super::addon_panel::dev_open(&self.shared),
                 _ if part == "sample" => {
                     let mut model = self.shared.model();
                     let samples = [
@@ -272,21 +288,69 @@ impl OverlayApp {
         let mut clicked = None;
         {
             let model = self.shared.model();
-            let mut area = egui::ScrollArea::vertical().stick_to_bottom(true).auto_shrink([false, false]);
+            // Dragging over the list selects text (like Electron), it does not scroll it.
+            let mut area = egui::ScrollArea::vertical()
+                .stick_to_bottom(true)
+                .auto_shrink([false, false])
+                .scroll_source(egui::containers::scroll_area::ScrollSource { drag: false, ..Default::default() });
             if std::mem::take(&mut self.scroll_to_bottom) {
                 area = area.vertical_scroll_offset(f32::MAX);
             }
             area.show(ui, |ui| {
                 ui.style_mut().text_styles.insert(TextStyle::Body, FontId::proportional(font_size));
+                // Message text can be selected and copied with Ctrl+C (EmojiLabel's own
+                // `selectable` does not reach its text segments, the style flag does).
+                ui.style_mut().interaction.selectable_labels = true;
                 ui.spacing_mut().item_spacing.y = 0.0;
                 let mut any = false;
                 let mut force_hover = self.dev_hover;
+                let mut row_index = 0;
                 for row in model.list.visible() {
                     any = true;
                     let forced = force_hover && shows_translation(&row.item, self.mode);
                     force_hover &= !forced;
-                    if message_row(ui, row, self.mode, font_size, forced).clicked() {
+                    let resp = message_row(ui, row, self.mode, font_size, forced || self.dev_menu == Some(row.item.id));
+                    if self.first_row_rect.is_none() || row_index == 0 {
+                        self.first_row_rect = Some(resp.rect);
+                    }
+                    row_index += 1;
+                    if resp.clicked() && can_translate(&row.item) {
                         clicked = Some(row.item.id);
+                    }
+                    let shown = if shows_translation(&row.item, self.mode) {
+                        row.item.translated.clone().unwrap_or_default()
+                    } else {
+                        row.item.original.clone()
+                    };
+                    let shared = &self.shared;
+                    let copy = |text: &str| {
+                        if let Err(e) = win::copy_to_clipboard(shared.hwnd(), text) {
+                            shared.log.write(&format!("copy failed: {e}"));
+                        }
+                    };
+                    let menu = |ui: &mut Ui| {
+                        widgets::field_style(ui);
+                        if ui.button("Copiar mensaje").clicked() {
+                            copy(&shown);
+                            ui.close();
+                        }
+                        if ui.button("Copiar original").clicked() {
+                            copy(&row.item.original);
+                            ui.close();
+                        }
+                        if ui.button("Copiar nombre").clicked() {
+                            copy(&row.item.player);
+                            ui.close();
+                        }
+                    };
+                    if self.dev_menu == Some(row.item.id) {
+                        // Screenshot of the context menu without a real right click.
+                        egui::Area::new(Id::new("dev-row-menu"))
+                            .order(Order::Foreground)
+                            .fixed_pos(resp.rect.center())
+                            .show(ui.ctx(), |ui| Frame::menu(ui.style()).show(ui, menu));
+                    } else {
+                        resp.context_menu(menu);
                     }
                 }
                 if !any {
@@ -346,7 +410,10 @@ impl OverlayApp {
                     if paused {
                         ui.add(egui::Label::new(RichText::new(PAUSED_NOTE).size(11.0).color(style::AMBER)).truncate());
                     }
-                    let shown = transient.map(|(t, _)| t).unwrap_or(text);
+                    let mut shown = transient.map(|(t, _)| t).unwrap_or(text);
+                    if shown.is_empty() && self.shared.addon_hint() {
+                        shown = super::addon_panel::UPDATE_HINT.to_string();
+                    }
                     if !shown.is_empty() {
                         ui.add(egui::Label::new(RichText::new(shown).size(11.0).color(style::AMBER)).truncate());
                     }
@@ -457,6 +524,32 @@ impl OverlayApp {
 }
 
 impl eframe::App for OverlayApp {
+    fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
+        let (Some(step), Some(rect)) = (self.dev_select, self.first_row_rect) else { return };
+        let y = rect.top() + 12.0;
+        // Over the message text of the first row (after time, tag, name and badge).
+        let from = pos2(rect.left() + 200.0, y);
+        let to = pos2(rect.left() + 330.0, y);
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        match step {
+            0 => raw.events.push(egui::Event::PointerMoved(from)),
+            1 => raw.events.push(button(from, true)),
+            2..=6 => raw.events.push(egui::Event::PointerMoved(from + (to - from) * ((step - 1) as f32 / 5.0))),
+            7 => raw.events.push(button(to, false)),
+            _ => {
+                self.dev_select = None;
+                return;
+            }
+        }
+        self.dev_select = Some(step + 1);
+        ctx.request_repaint();
+    }
+
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
         style::BG.to_normalized_gamma_f32()
     }
@@ -469,6 +562,13 @@ impl eframe::App for OverlayApp {
             }
             self.apply_dev_state(ctx);
         }
+        // "Ocultar de las capturas de pantalla" (streams); screenshot runs always allow capture.
+        let hide = self.shared.config().prefs.hide_from_capture && !win::dev_capture();
+        if self.capture_hidden != Some(hide) && self.shared.hwnd().is_set() {
+            self.shared.hwnd().set_capture_hidden(hide);
+            self.capture_hidden = Some(hide);
+        }
+        super::addon_panel::show_first_run(ctx, &self.shared, self.icon.clone());
         if ctx.input(|i| i.viewport().close_requested()) {
             // ✕ and Alt+F4 only hide; quitting is done from the tray menu.
             ctx.send_viewport_cmd(ViewportCommand::CancelClose);
@@ -633,7 +733,9 @@ fn message_row(ui: &mut Ui, row: &Row, mode: Mode, fs: f32, force_hover: bool) -
                     let tab_c = tab_color(item.tab);
                     chip(ui, &channel_label(&item.channel), widgets::semibold(fs * 0.8), tab_c, with_alpha(tab_c, 0x22), vec2(5.0, 0.0), 4, body_h, Sense::hover());
                     ui.add_space(5.0);
-                    ui.label(RichText::new(&item.player).family(widgets::semibold_family()).color(class_color(item.class.as_deref())));
+                    ui.add(
+                        egui::Label::new(RichText::new(&item.player).family(widgets::semibold_family()).color(class_color(item.class.as_deref()))),
+                    );
                     if let Some(b) = badge(item, show_t) {
                         let (fg, bg) = match b.kind {
                             BadgeKind::Error => (style::ERROR_TEXT, style::ERROR_BG),
@@ -648,15 +750,19 @@ fn message_row(ui: &mut Ui, row: &Row, mode: Mode, fs: f32, force_hover: bool) -
                     EmojiLabel::new(RichText::new(format!(": {text}")).color(color)).show(ui);
                 });
                 if hovered && show_t {
-                    ui.add(egui::Label::new(RichText::new(&item.original).italics().size(fs * 0.88).color(style::MUTED)).wrap());
+                    ui.add(
+                        egui::Label::new(RichText::new(&item.original).italics().size(fs * 0.88).color(style::MUTED))
+                            .wrap(),
+                    );
                 }
             });
         });
     });
 
     let rect = inner.response.rect;
-    let sense = if clickable { Sense::click() } else { Sense::hover() };
-    let resp = ui.interact(rect, row_id, sense);
+    // Click only (never drag): a press-and-drag goes to the selectable labels below and
+    // selects text, a plain click translates paused rows, a right click opens the menu.
+    let resp = ui.interact(rect, row_id, Sense::click());
     if hovered || resp.hovered() {
         let fill = if clickable { with_alpha(style::ACCENT, 36) } else { white(0.05) };
         ui.painter().set(bg_slot, egui::epaint::RectShape::filled(rect, 6.0, fill));

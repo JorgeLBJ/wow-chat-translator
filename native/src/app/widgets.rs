@@ -198,3 +198,30 @@ pub fn caption_drag(ctx: &egui::Context, id: Id, bar: Rect, over_control: bool, 
         }
     }
 }
+
+/// A checkbox like the Electron `input[type=checkbox]` with the accent color: a 14 px
+/// rounded box (blue with ✓ when on) and its label, both centered on one line.
+pub fn checkbox(ui: &mut Ui, on: &mut bool, label: &str, font: FontId, color: Color32) -> Response {
+    let text_w = if label.is_empty() { 0.0 } else { text_width(ui, label, &font) + 7.0 };
+    let (rect, mut resp) = ui.allocate_exact_size(vec2(14.0 + text_w, 20.0), Sense::click());
+    if resp.clicked() {
+        *on = !*on;
+        resp.mark_changed();
+    }
+    let p = ui.painter();
+    let check = Rect::from_center_size(Pos2::new(rect.left() + 7.0, rect.center().y), vec2(14.0, 14.0));
+    if *on {
+        p.rect_filled(check, 3.0, style::ACCENT);
+        text_in(p, check, "✓", FontId::proportional(11.0), Color32::WHITE);
+    } else {
+        let border = if resp.hovered() { white(0.4) } else { white(0.25) };
+        p.rect_filled(check, 3.0, white(0.06));
+        p.rect_stroke(check, 3.0, Stroke::new(1.0_f32, border), egui::StrokeKind::Inside);
+    }
+    if !label.is_empty() {
+        let galley = p.layout_no_wrap(label.to_owned(), font, color);
+        let pos = Pos2::new(check.right() + 7.0, (rect.center().y - galley.size().y / 2.0).round());
+        p.galley(pos, galley, color);
+    }
+    resp.on_hover_cursor(CursorIcon::PointingHand)
+}

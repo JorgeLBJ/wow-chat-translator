@@ -505,3 +505,19 @@ fn unreadable_config_falls_back_to_defaults() {
     assert_eq!(prefs::load(&path), Config::default());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn hide_from_capture_defaults_off_and_persists() {
+    assert!(!Config::default().prefs.hide_from_capture);
+    let dir = scratch("capture");
+    let path = dir.join("config.json");
+    let mut c = Config::default();
+    c.prefs.hide_from_capture = true;
+    prefs::save(&path, &c).unwrap();
+    let raw = std::fs::read_to_string(&path).unwrap();
+    assert!(raw.contains("\"hideFromCapture\": true"), "{raw}");
+    assert!(prefs::load(&path).prefs.hide_from_capture);
+    std::fs::write(&path, r#"{"prefs":{"fontSize":14}}"#).unwrap();
+    assert!(!prefs::load(&path).prefs.hide_from_capture, "missing key means off");
+    let _ = std::fs::remove_dir_all(&dir);
+}

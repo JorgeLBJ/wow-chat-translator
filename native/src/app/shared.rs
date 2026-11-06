@@ -13,6 +13,7 @@ use crate::core::pipeline::{Job, Pipeline, Translation, Translator, UiEvent};
 use crate::core::prefs::{self, Config};
 use crate::strip::Message;
 
+use super::addon_panel::AddonPanel;
 use super::debug_log::DebugLog;
 use super::instance::InstanceGuard;
 use super::messages::MessageList;
@@ -70,6 +71,10 @@ pub struct Shared {
     compose_focus: AtomicBool,
     /// The settings window is open (single instance).
     settings_open: AtomicBool,
+    /// The footer suggests updating the addon (no strip and an old or missing addon).
+    addon_hint: AtomicBool,
+    /// The addon installer panel (first-run dialog and Ajustes → General → Addon).
+    pub addon: Mutex<AddonPanel>,
     ctx: OnceLock<egui::Context>,
     pub instance: Option<InstanceGuard>,
 }
@@ -88,6 +93,7 @@ impl Shared {
         jobs: Sender<Job>,
         instance: Option<InstanceGuard>,
     ) -> Self {
+        let addon = AddonPanel::new(config_path.with_file_name("addon.json"));
         let mut pipeline = Pipeline::new(TARGET_LANG);
         pipeline.set_paused(config.prefs.translation_paused);
         Self {
@@ -103,6 +109,8 @@ impl Shared {
             game_running: AtomicBool::new(false),
             compose_focus: AtomicBool::new(false),
             settings_open: AtomicBool::new(false),
+            addon_hint: AtomicBool::new(false),
+            addon: Mutex::new(addon),
             ctx: OnceLock::new(),
             instance,
         }
@@ -244,6 +252,20 @@ impl Shared {
     pub fn set_settings_open(&self, open: bool) {
         self.settings_open.store(open, Ordering::SeqCst);
         self.repaint();
+    }
+
+    pub fn addon(&self) -> MutexGuard<'_, AddonPanel> {
+        lock(&self.addon)
+    }
+
+    pub fn addon_hint(&self) -> bool {
+        self.addon_hint.load(Ordering::SeqCst)
+    }
+
+    pub fn set_addon_hint(&self, on: bool) {
+        if self.addon_hint.swap(on, Ordering::SeqCst) != on {
+            self.repaint();
+        }
     }
 
     pub fn ctx(&self) -> Option<&egui::Context> {

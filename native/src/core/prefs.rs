@@ -16,11 +16,13 @@ pub struct Prefs {
     pub always_on_top: bool,
     pub auto_start: bool,
     pub translation_paused: bool,
+    /// Keep the windows out of screenshots and recordings (streams). Off by default.
+    pub hide_from_capture: bool,
 }
 
 impl Default for Prefs {
     fn default() -> Self {
-        Self { font_size: 13.0, opacity: 1.0, always_on_top: true, auto_start: true, translation_paused: false }
+        Self { font_size: 13.0, opacity: 1.0, always_on_top: true, auto_start: true, translation_paused: false, hide_from_capture: false }
     }
 }
 

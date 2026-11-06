@@ -1,4 +1,4 @@
-//! Background thread: follows `Wow.exe` (every 5 s) and, while it runs, captures the
+//! Background thread: follows the game client (`Wow*.exe`, every 5 s) and, while it runs, captures the
 //! strip patch every ~35 ms, decodes new frames into the pipeline and drives the
 //! window through the presence gate. Port of the reader parts of `app/src/main.js`.
 
@@ -8,6 +8,9 @@ use std::time::{Duration, Instant};
 use crate::capture::{self, Capturer, Grab, PATCH_H, PATCH_W};
 use crate::strip_reader::{find_strip, Layout};
 
+use crate::addon::hint::UpdateHint;
+
+use super::addon_panel;
 use super::game_watcher::{GameChange, GameWatcher};
 use super::presence::PresenceGate;
 use super::shared::Shared;
@@ -17,6 +20,8 @@ const TICK: Duration = Duration::from_millis(35);
 const IDLE_TICK: Duration = Duration::from_millis(250);
 const GAME_CHECK: Duration = Duration::from_secs(5);
 const HIDE_DELAY_MS: u64 = 2000;
+/// No strip this long after the game started: check whether the addon is outdated.
+const ADDON_HINT_AFTER_MS: u64 = 45_000;
 const WAITING_FOR_WOW: &str = "Esperando a que abras WoW…";
 
 /// What the last capture showed, to log and report only changes.
@@ -124,6 +129,7 @@ fn run(shared: Arc<Shared>) {
         last_seq: None,
         seen: Seen::Nothing,
     };
+    let mut addon_hint = UpdateHint::new(ADDON_HINT_AFTER_MS);
     let mut next_check = Instant::now();
     shared.set_reader(ReaderState::Idle);
     shared.set_status_text(WAITING_FOR_WOW);
@@ -140,6 +146,7 @@ fn run(shared: Arc<Shared>) {
                 Some(GameChange::Started) => {
                     shared.log.write("game started");
                     shared.set_game_running(true);
+                    addon_hint.game_started(now_ms());
                     shared.reset_user_hidden();
                     reader.reset();
                     shared.set_reader(ReaderState::Starting);
@@ -148,6 +155,8 @@ fn run(shared: Arc<Shared>) {
                 Some(GameChange::Exited) => {
                     shared.log.write("game exited");
                     shared.set_game_running(false);
+                    addon_hint.game_exited();
+                    shared.set_addon_hint(false);
                     reader.reset();
                     // Hidden through the gate: never while the user is typing in it.
                     gate.lost(now_ms());
@@ -156,11 +165,17 @@ fn run(shared: Arc<Shared>) {
                 }
                 None => {}
             }
+            if addon_hint.due(now_ms()) && addon_panel::stale_addon(&shared) {
+                shared.log.write("no strip and the addon is missing or outdated");
+                shared.set_addon_hint(true);
+            }
         }
 
         if watcher.running() {
             match reader.tick() {
                 Some(true) => {
+                    addon_hint.strip_seen();
+                    shared.set_addon_hint(false);
                     if let Some(change) = gate.seen(now_ms()) {
                         shared.on_presence(change);
                     }

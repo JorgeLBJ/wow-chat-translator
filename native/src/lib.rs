@@ -1,5 +1,6 @@
 //! Native companion app for the WoW chat translator addon.
 
+pub mod addon;
 pub mod app;
 pub mod core;
 pub mod secret;

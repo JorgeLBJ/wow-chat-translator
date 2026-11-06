@@ -12,7 +12,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     GetForegroundWindow, GetWindowLongPtrW, IsWindowVisible, SetForegroundWindow, SetLayeredWindowAttributes,
     SetWindowDisplayAffinity, SetWindowLongPtrW, ShowWindowAsync, SystemParametersInfoW, GWL_EXSTYLE, LWA_ALPHA,
     SPI_GETWORKAREA, SW_HIDE, SW_SHOW, SW_SHOWNOACTIVATE, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
-    WDA_EXCLUDEFROMCAPTURE, WS_EX_LAYERED,
+    WDA_EXCLUDEFROMCAPTURE, WDA_NONE, WS_EX_LAYERED,
 };
 
 /// A window handle that can cross threads (stored as an integer).
@@ -85,12 +85,12 @@ impl Hwnd {
         }
     }
 
-    /// Keeps the window out of screen captures, so the strip reader still sees the
-    /// addon strip when the overlay sits on top of it (Electron's setContentProtection).
-    pub fn exclude_from_capture(self) {
+    /// "Ocultar de las capturas de pantalla": keeps the window out of screenshots and
+    /// recordings (`WDA_EXCLUDEFROMCAPTURE`), or allows them again (`WDA_NONE`).
+    pub fn set_capture_hidden(self, hidden: bool) {
         if let Some(h) = self.get() {
             unsafe {
-                let _ = SetWindowDisplayAffinity(h, WDA_EXCLUDEFROMCAPTURE);
+                let _ = SetWindowDisplayAffinity(h, if hidden { WDA_EXCLUDEFROMCAPTURE } else { WDA_NONE });
             }
         }
     }
@@ -220,4 +220,21 @@ pub fn focus_game() -> bool {
 /// (for UI screenshots) and WoW is never brought to the front. Off by default.
 pub fn dev_capture() -> bool {
     std::env::var("WCT_DEV_CAPTURE").is_ok_and(|v| v == "1")
+}
+
+/// A top-level window of this process with exactly this title (e.g. the settings
+/// window, whose handle egui does not expose).
+pub fn find_own_window(title: &str) -> Hwnd {
+    use windows::Win32::System::Threading::GetCurrentProcessId;
+    use windows::Win32::UI::WindowsAndMessaging::{FindWindowW, GetWindowThreadProcessId};
+    let title = windows::core::HSTRING::from(title);
+    unsafe {
+        let Ok(h) = FindWindowW(windows::core::PCWSTR::null(), &title) else { return Hwnd(0) };
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(h, Some(&mut pid));
+        if h.is_invalid() || pid != GetCurrentProcessId() {
+            return Hwnd(0);
+        }
+        Hwnd(h.0 as isize)
+    }
 }
