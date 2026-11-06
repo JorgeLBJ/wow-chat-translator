@@ -80,7 +80,11 @@ function render(item) {
     badge.title = item.error ?? "";
     body.append(badge);
   } else if (item.lang) {
-    body.append(el("span", "lg", showTranslated ? `${item.lang.toUpperCase()}→ES` : item.lang.toUpperCase()));
+    const badge = el("span", "lg", showTranslated ? `${item.lang.toUpperCase()}→ES` : item.lang.toUpperCase());
+    if (item.provider) badge.title = item.fallbackReason ? `${item.provider} (LLM falló: ${item.fallbackReason})` : item.provider;
+    body.append(badge);
+  } else if (showTranslated) {
+    body.append(el("span", "lg", "→ES"));
   }
   body.append(el("span", "txt", `: ${showTranslated ? item.translated : item.original}`));
   if (showTranslated) body.append(el("div", "orig", item.original));
@@ -280,3 +284,90 @@ window.wct.getPrefs().then((p) => {
   prefs = p;
   applyPrefs();
 });
+
+// Translator settings ---------------------------------------------------------
+
+const PRESET_URLS = { openrouter: "https://openrouter.ai/api/v1", lmstudio: "http://localhost:1234/v1", custom: "" };
+const KEY_HINTS = {
+  openrouter: "Créala en openrouter.ai → Keys.",
+  lmstudio: "No hace falta para LM Studio. Abre LM Studio → Developer → Start Server y carga un modelo.",
+  custom: "Solo si tu servidor la pide.",
+};
+const settingsBox = $("settings");
+let savedTranslator = null;
+let keyTouched = false;
+
+const currentProvider = () => $("t-provider").value;
+
+function formSettings() {
+  return {
+    provider: currentProvider(),
+    baseUrl: $("t-url").value.trim(),
+    model: $("t-model").value.trim(),
+    // undefined = keep the saved key (it is never sent back to the UI)
+    apiKey: keyTouched ? $("t-key").value.trim() : undefined,
+  };
+}
+
+function showResult(text, kind) {
+  $("t-result").className = kind ?? "";
+  $("t-result").textContent = text;
+}
+
+function syncProvider() {
+  const p = currentProvider();
+  $("t-llm").hidden = p === "google";
+  const sameProvider = savedTranslator && savedTranslator.provider === p;
+  $("t-url").value = sameProvider && savedTranslator.baseUrl ? savedTranslator.baseUrl : PRESET_URLS[p] ?? "";
+  $("t-model").value = sameProvider ? savedTranslator.model : "";
+  keyTouched = false;
+  $("t-key").value = "";
+  $("t-key").placeholder = sameProvider && savedTranslator.hasKey ? "•••••• guardada (escribe para cambiarla)" : "sin clave";
+  $("t-key-hint").textContent = KEY_HINTS[p] ?? "";
+  $("t-models").replaceChildren();
+  showResult("");
+}
+
+async function openSettings() {
+  menu.classList.remove("open");
+  savedTranslator = await window.wct.getTranslator();
+  $("t-provider").value = savedTranslator.provider;
+  syncProvider();
+  settingsBox.classList.add("open");
+}
+
+$("m-translator").onclick = openSettings;
+$("t-provider").onchange = syncProvider;
+$("t-key").oninput = () => { keyTouched = true; };
+$("t-cancel").onclick = () => settingsBox.classList.remove("open");
+
+$("t-load").onclick = async () => {
+  showResult("Cargando modelos…");
+  const res = await window.wct.listModels(formSettings());
+  if (!res.ok) return showResult(`No se pudo cargar la lista: ${res.error}`, "err");
+  $("t-models").replaceChildren(...res.models.map((id) => {
+    const o = document.createElement("option");
+    o.value = id;
+    return o;
+  }));
+  if (!$("t-model").value && res.models.length === 1) $("t-model").value = res.models[0];
+  showResult(`${res.models.length} modelos disponibles. Haz clic en el campo Modelo para elegir.`, "ok");
+};
+
+$("t-test").onclick = async () => {
+  showResult("Probando…");
+  const res = await window.wct.testTranslator(formSettings());
+  if (!res.ok) return showResult(`Error: ${res.error}`, "err");
+  showResult(`«${res.sample}» → «${res.text}»`, "ok");
+};
+
+$("t-save").onclick = async () => {
+  const s = formSettings();
+  if (s.provider !== "google" && !s.model) return showResult("Elige un modelo antes de guardar.", "err");
+  const res = await window.wct.setTranslator(s);
+  if (!res.ok) return showResult(`Error: ${res.error}`, "err");
+  settingsBox.classList.remove("open");
+};
+
+window.wct.onTranslatorChanged((label) => { $("provider-label").textContent = label; });
+window.wct.getTranslator().then((t) => { $("provider-label").textContent = t.label; });

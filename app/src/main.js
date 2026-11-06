@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, Tray, clipboard, globalShortcut, ipcMain, nativeImage, screen } from "electron";
+import { app, BrowserWindow, Menu, Tray, clipboard, globalShortcut, ipcMain, nativeImage, safeStorage, screen } from "electron";
 import { execFile, spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import fs from "node:fs";
@@ -12,6 +12,9 @@ import { createGameWatcher } from "./core/game-watcher.js";
 import { createPresence } from "./core/presence.js";
 import { createGoogleTranslator } from "./core/translators/google.js";
 import { createCachedTranslator } from "./core/cache.js";
+import { createOpenAICompatibleTranslator } from "./core/translators/openai-compatible.js";
+import { createFallbackTranslator } from "./core/translators/fallback.js";
+import { keyBinding } from "./core/key-binding.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const WORKER = path.join(here, "..", "ocr", "ocr-worker.ps1");
@@ -59,7 +62,59 @@ const status = (text) => send("status", text);
 // Pipeline: OCR lines -> new messages -> translation -> overlay -----------
 
 const tracker = createTracker();
-const translator = createCachedTranslator(createGoogleTranslator());
+const google = createGoogleTranslator();
+
+// Translator settings ------------------------------------------------------
+// The API key is stored encrypted with Windows DPAPI (safeStorage) and never sent
+// to the renderer; the UI only learns whether a key is saved.
+
+const PROVIDERS = {
+  google: { label: "Google", baseUrl: "" },
+  openrouter: { label: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1" },
+  lmstudio: { label: "LM Studio", baseUrl: "http://localhost:1234/v1" },
+  custom: { label: "Personalizado", baseUrl: "" },
+};
+
+const translatorSettings = () => ({ provider: "google", baseUrl: "", model: "", ...config.translator });
+
+const effectiveUrl = (provider, baseUrl) => baseUrl || PROVIDERS[provider]?.baseUrl || "";
+
+// The saved key is bound to the provider + server it was saved for and is only
+// returned for that same pair, so it can never be sent to a different server.
+function readApiKey(provider, baseUrl) {
+  const t = config.translator;
+  const enc = t?.apiKeyEnc;
+  if (!enc || !safeStorage.isEncryptionAvailable()) return "";
+  if (t.keyBinding !== keyBinding(provider, effectiveUrl(provider, baseUrl))) return "";
+  try {
+    return safeStorage.decryptString(Buffer.from(enc, "base64"));
+  } catch {
+    return "";
+  }
+}
+
+function llmFor(settings, apiKey) {
+  const baseUrl = effectiveUrl(settings.provider, settings.baseUrl);
+  if (!baseUrl) throw new Error("Falta la URL del servidor");
+  return createOpenAICompatibleTranslator({ baseUrl, apiKey, model: settings.model });
+}
+
+function buildTranslator() {
+  const s = translatorSettings();
+  if (s.provider === "google" || !s.model) {
+    return createCachedTranslator({ translate: async (t, l) => ({ ...(await google.translate(t, l)), provider: "Google" }) });
+  }
+  const label = PROVIDERS[s.provider]?.label ?? "LLM";
+  return createCachedTranslator(
+    createFallbackTranslator({ name: label, translator: llmFor(s, readApiKey(s.provider, s.baseUrl)) }, { name: "Google", translator: google }),
+  );
+}
+
+let translator = null;
+const providerLabel = () => {
+  const s = translatorSettings();
+  return s.provider === "google" || !s.model ? "Google" : `${PROVIDERS[s.provider]?.label ?? "LLM"} · ${s.model}`;
+};
 let nextId = 1;
 
 function handleOcrLines(lines) {
@@ -86,7 +141,14 @@ function handleOcrLines(lines) {
       .translate(msg.text, TARGET_LANG)
       .then((r) => {
         const same = r.source === TARGET_LANG || r.text.trim().toLowerCase() === msg.text.trim().toLowerCase();
-        send("chat:update", { id: item.id, lang: r.source, translated: same ? null : r.text, status: "done" });
+        send("chat:update", {
+          id: item.id,
+          lang: r.source === "auto" ? null : r.source,
+          translated: same ? null : r.text,
+          provider: r.provider,
+          fallbackReason: r.fallbackReason,
+          status: "done",
+        });
       })
       .catch((err) => send("chat:update", { id: item.id, status: "error", error: err.message }));
   }
@@ -424,6 +486,56 @@ ipcMain.on("win:resize", (_e, { width, height }) => {
 ipcMain.on("win:resize-end", () => overlay && saveConfig({ overlayBounds: overlay.getBounds() }));
 ipcMain.on("win:blur", () => overlay?.blur());
 
+ipcMain.handle("translator:get", () => {
+  const s = translatorSettings();
+  const hasKey = Boolean(s.apiKeyEnc) && s.keyBinding === keyBinding(s.provider, effectiveUrl(s.provider, s.baseUrl));
+  return { provider: s.provider, baseUrl: s.baseUrl, model: s.model, hasKey, label: providerLabel() };
+});
+
+// apiKey: undefined keeps the saved key (only if provider and server are unchanged),
+// "" deletes it, a string replaces it.
+ipcMain.handle("translator:set", (_e, { provider, baseUrl, model, apiKey }) => {
+  if (!PROVIDERS[provider]) return { ok: false, error: "Proveedor desconocido" };
+  const next = { provider, baseUrl: String(baseUrl ?? "").trim(), model: String(model ?? "").trim() };
+  const binding = keyBinding(provider, effectiveUrl(provider, next.baseUrl));
+  const prev = config.translator;
+  if (apiKey === undefined) {
+    if (prev?.apiKeyEnc && prev.keyBinding === binding) {
+      next.apiKeyEnc = prev.apiKeyEnc;
+      next.keyBinding = binding;
+    }
+  } else if (apiKey) {
+    if (!safeStorage.isEncryptionAvailable()) return { ok: false, error: "Windows no permite cifrar la clave; no se guardó" };
+    next.apiKeyEnc = safeStorage.encryptString(String(apiKey).trim()).toString("base64");
+    next.keyBinding = binding;
+  }
+  saveConfig({ translator: next });
+  translator = buildTranslator();
+  send("translator:changed", providerLabel());
+  return { ok: true, label: providerLabel() };
+});
+
+ipcMain.handle("translator:models", async (_e, { provider, baseUrl, apiKey }) => {
+  try {
+    const key = apiKey === undefined ? readApiKey(provider, baseUrl) : apiKey;
+    return { ok: true, models: await llmFor({ provider, baseUrl }, key).listModels() };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
+ipcMain.handle("translator:test", async (_e, { provider, baseUrl, model, apiKey }) => {
+  const sample = "LFM ZG need heal, pst";
+  try {
+    if (provider === "google") return { ok: true, sample, ...(await google.translate(sample, TARGET_LANG)) };
+    if (!model) return { ok: false, error: "Elige un modelo" };
+    const key = apiKey === undefined ? readApiKey(provider, baseUrl) : apiKey;
+    return { ok: true, sample, ...(await llmFor({ provider, baseUrl, model }, key).translate(sample, TARGET_LANG)) };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
 ipcMain.handle("prefs:get", () => prefs());
 ipcMain.handle("prefs:set", (_e, patch) => {
   saveConfig({ prefs: { ...prefs(), ...patch } });
@@ -452,6 +564,7 @@ if (!app.requestSingleInstanceLock()) {
   app.on("second-instance", showOverlay);
   app.whenReady().then(() => {
     config = loadConfig();
+    translator = buildTranslator();
     createOverlay();
     createTray();
     applyAutoStart();

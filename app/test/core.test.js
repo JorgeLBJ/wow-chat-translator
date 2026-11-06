@@ -7,6 +7,9 @@ import { createCachedTranslator } from "../src/core/cache.js";
 import { channelTab } from "../src/core/channels.js";
 import { createGameWatcher } from "../src/core/game-watcher.js";
 import { createPresence } from "../src/core/presence.js";
+import { createOpenAICompatibleTranslator, parseLlmReply } from "../src/core/translators/openai-compatible.js";
+import { createFallbackTranslator } from "../src/core/translators/fallback.js";
+import { keyBinding } from "../src/core/key-binding.js";
 
 describe("parseLines", () => {
   it("parses OCR lines in the format NNN Channel Player Name: message", () => {
@@ -230,5 +233,97 @@ describe("createPresence", () => {
     for (let i = 0; i < 3; i++) p.update(false);
     for (let i = 0; i < 3; i++) p.update(true);
     expect(onChange.mock.calls.map((c) => c[0])).toEqual([true, false, true]);
+  });
+});
+
+describe("parseLlmReply", () => {
+  it("reads the LANG and TEXT lines", () => {
+    expect(parseLlmReply("LANG: en\nTEXT: Busco más para ZG, falta sanador")).toEqual({
+      source: "en", text: "Busco más para ZG, falta sanador",
+    });
+  });
+
+  it("keeps multi-line translations and tolerates spacing/case", () => {
+    expect(parseLlmReply("lang:PT\ntext:  línea uno\nlínea dos")).toEqual({ source: "pt", text: "línea uno\nlínea dos" });
+  });
+
+  it("falls back to the whole reply when the format is missing", () => {
+    expect(parseLlmReply("  hola a todos  ")).toEqual({ source: "auto", text: "hola a todos" });
+  });
+});
+
+describe("openai-compatible translator", () => {
+  const reply = (content) => ({ ok: true, json: async () => ({ choices: [{ message: { content } }] }) });
+
+  it("posts a chat completion with model, key and target language", async () => {
+    const fetchFn = vi.fn(async () => reply("LANG: en\nTEXT: Busco más para ZG"));
+    const tr = createOpenAICompatibleTranslator({ baseUrl: "https://openrouter.ai/api/v1/", apiKey: "k-123", model: "m/x", fetchFn });
+    const res = await tr.translate("LFM ZG need heal", "es");
+    expect(res).toEqual({ source: "en", text: "Busco más para ZG" });
+    const [url, init] = fetchFn.mock.calls[0];
+    expect(url).toBe("https://openrouter.ai/api/v1/chat/completions");
+    expect(init.method).toBe("POST");
+    expect(init.headers.Authorization).toBe("Bearer k-123");
+    const body = JSON.parse(init.body);
+    expect(body.model).toBe("m/x");
+    expect(body.messages.at(-1).content).toContain("LFM ZG need heal");
+    expect(body.messages[0].content).toContain("Spanish");
+  });
+
+  it("omits the Authorization header when no key is set (local servers)", async () => {
+    const fetchFn = vi.fn(async () => reply("LANG: en\nTEXT: hola"));
+    await createOpenAICompatibleTranslator({ baseUrl: "http://localhost:1234/v1", model: "local", fetchFn }).translate("hi", "es");
+    expect(fetchFn.mock.calls[0][1].headers.Authorization).toBeUndefined();
+  });
+
+  it("asks for English when the target is en", async () => {
+    const fetchFn = vi.fn(async () => reply("LANG: es\nTEXT: anyone for Riptear?"));
+    await createOpenAICompatibleTranslator({ baseUrl: "http://x/v1", model: "m", fetchFn }).translate("alguien para Riptear?", "en");
+    expect(JSON.parse(fetchFn.mock.calls[0][1].body).messages[0].content).toContain("English");
+  });
+
+  it("throws on HTTP errors and empty replies", async () => {
+    const bad = createOpenAICompatibleTranslator({ baseUrl: "http://x/v1", model: "m", fetchFn: async () => ({ ok: false, status: 401, text: async () => "no key" }) });
+    await expect(bad.translate("hi", "es")).rejects.toThrow("401");
+    const empty = createOpenAICompatibleTranslator({ baseUrl: "http://x/v1", model: "m", fetchFn: async () => reply("") });
+    await expect(empty.translate("hi", "es")).rejects.toThrow();
+  });
+
+  it("lists model ids from /models", async () => {
+    const fetchFn = vi.fn(async () => ({ ok: true, json: async () => ({ data: [{ id: "qwen2.5-7b" }, { id: "llama-3.1-8b" }] }) }));
+    const tr = createOpenAICompatibleTranslator({ baseUrl: "http://localhost:1234/v1", fetchFn });
+    expect(await tr.listModels()).toEqual(["qwen2.5-7b", "llama-3.1-8b"]);
+    expect(fetchFn.mock.calls[0][0]).toBe("http://localhost:1234/v1/models");
+  });
+});
+
+describe("createFallbackTranslator", () => {
+  it("uses the primary and tags the result with its name", async () => {
+    const tr = createFallbackTranslator(
+      { name: "llm", translator: { translate: async () => ({ text: "a", source: "en" }) } },
+      { name: "google", translator: { translate: vi.fn() } },
+    );
+    expect(await tr.translate("x", "es")).toEqual({ text: "a", source: "en", provider: "llm" });
+  });
+
+  it("falls back to the secondary when the primary fails", async () => {
+    const tr = createFallbackTranslator(
+      { name: "llm", translator: { translate: async () => { throw new Error("down"); } } },
+      { name: "google", translator: { translate: async () => ({ text: "b", source: "en" }) } },
+    );
+    expect(await tr.translate("x", "es")).toEqual({ text: "b", source: "en", provider: "google", fallbackReason: "down" });
+  });
+});
+
+describe("keyBinding", () => {
+  it("is the same for equivalent URLs of the same provider", () => {
+    expect(keyBinding("openrouter", "https://OpenRouter.ai/api/v1/")).toBe(keyBinding("openrouter", "https://openrouter.ai/api/v1"));
+  });
+
+  it("differs when the provider or the server changes", () => {
+    const saved = keyBinding("openrouter", "https://openrouter.ai/api/v1");
+    expect(keyBinding("custom", "https://openrouter.ai/api/v1")).not.toBe(saved);
+    expect(keyBinding("openrouter", "https://evil.example/api/v1")).not.toBe(saved);
+    expect(keyBinding("lmstudio", "http://localhost:1234/v1")).not.toBe(saved);
   });
 });

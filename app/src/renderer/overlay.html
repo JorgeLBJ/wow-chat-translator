@@ -85,6 +85,29 @@
   .fs { all: unset; cursor: pointer; color: #ccc; padding: 0 4px; border-radius: 4px; font-weight: 600; }
   .fs:hover { background: rgba(255,255,255,.1); }
 
+  /* translator settings */
+  .modal { position: absolute; inset: 0; z-index: 40; background: rgba(5, 7, 10, .75); display: none; overflow: auto; }
+  .modal.open { display: block; }
+  .sheet { margin: 12px auto; width: min(460px, calc(100% - 24px)); background: #0f141d; border: 1px solid rgba(255,255,255,.14);
+    border-radius: 8px; padding: 12px 14px; box-sizing: border-box; }
+  .sheet h3 { margin: 0 0 10px; font-size: 13px; }
+  .sheet label { display: block; font-size: 11px; color: #9aa3ad; margin: 8px 0 3px; }
+  .sheet input, .sheet select { width: 100%; box-sizing: border-box; background: rgba(255,255,255,.06); color: #eee;
+    border: 1px solid rgba(255,255,255,.12); border-radius: 6px; padding: 5px 8px; font: 12px "Segoe UI", sans-serif; outline: none; }
+  .sheet select option { background: #0f141d; }
+  .sheet input:focus, .sheet select:focus { border-color: #3b82f6; }
+  .sheet .inline { display: flex; gap: 6px; }
+  .sheet .inline input { flex: 1; }
+  .sheet .hint { font-size: 10.5px; color: #6b7480; margin-top: 3px; }
+  .btn { all: unset; cursor: pointer; padding: 5px 10px; border-radius: 6px; font-size: 12px; background: rgba(255,255,255,.08); color: #ddd; white-space: nowrap; }
+  .btn:hover { background: rgba(255,255,255,.14); }
+  .btn.primary { background: #3b82f6; color: #fff; }
+  .btn.primary:hover { background: #2563eb; }
+  .actions { display: flex; gap: 6px; justify-content: flex-end; margin-top: 12px; }
+  #t-result { font-size: 11.5px; margin-top: 8px; min-height: 1em; word-wrap: break-word; }
+  #t-result.ok { color: #86efac; } #t-result.err { color: #fca5a5; }
+  .llm-only[hidden] { display: none; }
+
   #grip { position: absolute; right: 0; bottom: 0; width: 16px; height: 16px; cursor: nwse-resize; z-index: 5;
     background: linear-gradient(135deg, transparent 50%, rgba(255,255,255,.35) 50%, rgba(255,255,255,.35) 60%, transparent 60%,
       transparent 70%, rgba(255,255,255,.35) 70%, rgba(255,255,255,.35) 80%, transparent 80%); }
@@ -109,6 +132,7 @@
     <button class="ib x" id="close" data-tip="Ocultar (sigue en la bandeja)">✕</button>
   </div>
   <div class="menu" id="menu">
+    <button id="m-translator"><span>Traductor (Google / LLM)…</span><kbd></kbd></button>
     <button id="m-calib"><span>Calibrar zona del panel</span><kbd>Ctrl+Shift+R</kbd></button>
     <button id="m-dock"><span>Tapar el panel del addon</span><kbd>⧉</kbd></button>
     <button id="m-clear"><span>Limpiar mensajes</span><kbd></kbd></button>
@@ -128,11 +152,43 @@
     <div class="preview" id="preview"></div>
   </div>
   <div class="ft">
-    <span><span class="dot" id="dot"></span><span id="ocr-label">OCR</span> · Google</span>
+    <span><span class="dot" id="dot"></span><span id="ocr-label">OCR</span> · <span id="provider-label">Google</span></span>
     <span id="status"></span>
     <span style="flex:1"></span>
     Opacidad <input type="range" id="opacity" min="40" max="100">
     Texto <button class="fs" id="fs-down">A−</button><button class="fs" id="fs-up">A+</button>
+  </div>
+  <div class="modal" id="settings">
+    <div class="sheet">
+      <h3>Traductor</h3>
+      <label for="t-provider">Proveedor</label>
+      <select id="t-provider">
+        <option value="google">Google (gratis, sin configuración)</option>
+        <option value="openrouter">OpenRouter (LLM en la nube, con clave)</option>
+        <option value="lmstudio">LM Studio (LLM local)</option>
+        <option value="custom">Otro servidor compatible con OpenAI</option>
+      </select>
+      <div class="llm-only" id="t-llm">
+        <label for="t-url">URL del servidor</label>
+        <input id="t-url" spellcheck="false" autocomplete="off">
+        <label for="t-key">Clave API</label>
+        <input id="t-key" type="password" spellcheck="false" autocomplete="off">
+        <div class="hint" id="t-key-hint"></div>
+        <label for="t-model">Modelo</label>
+        <div class="inline">
+          <input id="t-model" list="t-models" spellcheck="false" autocomplete="off" placeholder="Escribe o carga la lista">
+          <button class="btn" id="t-load">Cargar modelos</button>
+        </div>
+        <datalist id="t-models"></datalist>
+        <div class="hint">Si el LLM falla o no responde, ese mensaje se traduce con Google.</div>
+      </div>
+      <div id="t-result"></div>
+      <div class="actions">
+        <button class="btn" id="t-test">Probar</button>
+        <button class="btn" id="t-cancel">Cancelar</button>
+        <button class="btn primary" id="t-save">Guardar</button>
+      </div>
+    </div>
   </div>
   <div id="grip"></div>
 </div>
