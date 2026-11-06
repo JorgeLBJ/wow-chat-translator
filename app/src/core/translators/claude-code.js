@@ -27,10 +27,15 @@ function createLimiter(max) {
   };
 }
 
-function withTimeout(promise, ms) {
+// Rejects after `ms` and aborts the query, so a hung Claude Code process is stopped
+// instead of lingering after the Google fallback has taken over.
+function withTimeout(promise, ms, controller) {
   let timer;
   const timeout = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`Claude Code: sin respuesta tras ${ms / 1000} s (time out)`)), ms);
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(new Error(`Claude Code: sin respuesta tras ${ms / 1000} s (time out)`));
+    }, ms);
   });
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
@@ -46,7 +51,12 @@ export function createClaudeCodeTranslator({
 
   return {
     translate(text, target) {
-      return limit(() => withTimeout(run(text, target), timeoutMs));
+      return limit(() => {
+        const controller = new AbortController();
+        const running = run(text, target, controller);
+        running.catch(() => {}); // an aborted run rejects after the timeout already did
+        return withTimeout(running, timeoutMs, controller);
+      });
     },
 
     async listModels() {
@@ -54,11 +64,12 @@ export function createClaudeCodeTranslator({
     },
   };
 
-  async function run(text, target) {
+  async function run(text, target, controller) {
     const messages = queryFn({
       prompt: text,
       options: {
         model,
+        abortController: controller,
         systemPrompt: systemPrompt(target),
         tools: [], // pure translation: no file, shell or web access
         settingSources: [], // ignore the user's CLAUDE.md, hooks and settings

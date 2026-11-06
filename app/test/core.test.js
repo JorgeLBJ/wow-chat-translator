@@ -506,3 +506,27 @@ describe("system prompt OCR hint", () => {
     expect(systemPrompt("es")).toMatch(/OCR/);
   });
 });
+
+describe("claude code translator abort", () => {
+  it("aborts the Claude Code query when it times out, so the process does not linger", async () => {
+    let controller;
+    const queryFn = async function* ({ options }) {
+      controller = options.abortController;
+      await new Promise((r) => setTimeout(r, 200));
+      yield { type: "result", subtype: "success", is_error: false, result: "x" };
+    };
+    await expect(createClaudeCodeTranslator({ model: "m", queryFn, timeoutMs: 20 }).translate("hi", "es")).rejects.toThrow();
+    expect(controller).toBeInstanceOf(AbortController);
+    expect(controller.signal.aborted).toBe(true);
+  });
+
+  it("does not abort a query that finishes in time", async () => {
+    let controller;
+    const queryFn = async function* ({ options }) {
+      controller = options.abortController;
+      yield { type: "result", subtype: "success", is_error: false, result: "LANG: en\nTEXT: hola" };
+    };
+    await createClaudeCodeTranslator({ model: "m", queryFn, timeoutMs: 1000 }).translate("hi", "es");
+    expect(controller.signal.aborted).toBe(false);
+  });
+});
