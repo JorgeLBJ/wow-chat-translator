@@ -11,6 +11,8 @@ import { createOpenAICompatibleTranslator, parseLlmReply } from "../src/core/tra
 import { createFallbackTranslator } from "../src/core/translators/fallback.js";
 import { keyBinding } from "../src/core/key-binding.js";
 import { protectLinks, restoreLinks, tidyLinks, onlyLinks } from "../src/core/links.js";
+import { fixOcrWords } from "../src/core/ocr-fixes.js";
+import { systemPrompt } from "../src/core/translators/prompt.js";
 import { createAnthropicTranslator } from "../src/core/translators/anthropic.js";
 import { createClaudeCodeTranslator } from "../src/core/translators/claude-code.js";
 
@@ -479,5 +481,28 @@ describe("item links written with < > by the addon", () => {
     const { text, links } = protectLinks(tidyLinks("anyone selling < Perfect Deviate Scale >?"));
     expect(text).toBe("anyone selling [0]?");
     expect(restoreLinks("¿alguien vende [0]?", links)).toBe("¿alguien vende [Perfect Deviate Scale]?");
+  });
+});
+
+describe("fixOcrWords", () => {
+  it.each([
+    ["101", "lol"],
+    ["1o1", "lol"],
+    ["IoI", "lol"],
+    ["l0l", "lol"],
+    ["haha 1o1 nice", "haha lol nice"],
+    ["101!", "lol!"],
+  ])("reads the standalone OCR misread %s as lol", (input, expected) => {
+    expect(fixOcrWords(input)).toBe(expected);
+  });
+
+  it.each(["WTS for 101g", "level 101 boss", "haha 101 nice", "1010", "room 101b", "lol"])("leaves %s unchanged", (text) => {
+    expect(fixOcrWords(text)).toBe(text);
+  });
+});
+
+describe("system prompt OCR hint", () => {
+  it("tells the LLM that the text comes from OCR and may confuse l/1 and o/0", () => {
+    expect(systemPrompt("es")).toMatch(/OCR/);
   });
 });

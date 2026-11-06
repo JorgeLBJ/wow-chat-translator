@@ -17,6 +17,8 @@ export function systemPrompt(target) {
     "such as tank, healer or dps, and dungeon or raid abbreviations such as ZG.",
     "Keep player names, item names, zone and dungeon names (e.g. ZG, Deadmines, Brill) as they are.",
     "Tokens like [0], [1], [2] stand for item, spell or quest links: copy them exactly, in a natural position.",
+    "The text was read from the screen with OCR and may contain misread characters: lowercase l, 1 and I,",
+    "and o and 0, are often confused (for example '101' or 'IoI' is usually 'lol'). Infer the intended words from context.",
     "Keep the tone and emojis. Never add explanations or notes.",
     "Reply in exactly this format and nothing else:",
     "LANG: <ISO 639-1 code of the original message language>",

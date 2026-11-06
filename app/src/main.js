@@ -18,6 +18,7 @@ import { ANTHROPIC_DEFAULT_MODEL, createAnthropicTranslator } from "./core/trans
 import { CLAUDE_CODE_MODELS, createClaudeCodeTranslator } from "./core/translators/claude-code.js";
 import { keyBinding } from "./core/key-binding.js";
 import { onlyLinks, protectLinks, restoreLinks, tidyLinks } from "./core/links.js";
+import { fixOcrWords } from "./core/ocr-fixes.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const WORKER = path.join(here, "..", "ocr", "ocr-worker.ps1");
@@ -191,7 +192,7 @@ function handleOcrLines(lines) {
   const fresh = tracker.newMessages(parsed);
   debug("ocr", { lines: lines.length, parsed: parsed.map((m) => m.seq), fresh: fresh.map((m) => m.seq) });
   for (const msg of fresh) {
-    msg.text = tidyLinks(msg.text);
+    msg.text = fixOcrWords(tidyLinks(msg.text));
     // Links ([Item], [Spell]...) are never translated: mask them, restore after.
     const { text: masked, links } = protectLinks(msg.text);
     const item = {
