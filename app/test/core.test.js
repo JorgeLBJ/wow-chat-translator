@@ -13,6 +13,7 @@ import { keyBinding } from "../src/core/key-binding.js";
 import { protectLinks, restoreLinks, tidyLinks, onlyLinks } from "../src/core/links.js";
 import { fixOcrWords } from "../src/core/ocr-fixes.js";
 import { createMessagePipeline } from "../src/core/pipeline.js";
+import { replaceShortcodes } from "../src/core/emoji.js";
 import { systemPrompt } from "../src/core/translators/prompt.js";
 import { createAnthropicTranslator } from "../src/core/translators/anthropic.js";
 import { createClaudeCodeTranslator } from "../src/core/translators/claude-code.js";
@@ -656,5 +657,33 @@ describe("message pipeline: only real links are kept untranslated (strip)", () =
     p.addMessages([{ channel: "Trade", cls: null, player: "B", text: "\u0002[Linen Cloth]\u0003" }]);
     expect(tr.translate).not.toHaveBeenCalled();
     expect(sent[0][1]).toMatchObject({ original: "[Linen Cloth]", status: "done" });
+  });
+});
+
+describe("replaceShortcodes", () => {
+  it.each([
+    [":sob:", "😭"],
+    ["gg :joy: :fire:", "gg 😂 🔥"],
+    ["that's :100:", "that's 💯"],
+    ["nice :+1:", "nice 👍"],
+    [":SOB:", "😭"],
+  ])("turns %s into %s", (input, expected) => {
+    expect(replaceShortcodes(input)).toBe(expected);
+  });
+
+  it.each(["meet at 12:30:45", ":notanemoji:", "ratio 3:2:1", "WTS [Recipe: Elixir]"])("leaves %s unchanged", (text) => {
+    expect(replaceShortcodes(text)).toBe(text);
+  });
+});
+
+describe("message pipeline emoji", () => {
+  it("shows emoji instead of :shortcodes: and sends the emoji to the translator", async () => {
+    const sent = [];
+    const tr = { translate: vi.fn(async (t) => ({ text: `ES(${t})`, source: "en" })) };
+    const p = createMessagePipeline({ getTranslator: () => tr, send: (c, d) => sent.push([c, d]), isPaused: () => false, ocrFixes: false });
+    p.addMessages([{ channel: "Say", cls: null, player: "A", text: "i died again :sob:" }]);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(sent[0][1].original).toBe("i died again 😭");
+    expect(tr.translate.mock.calls[0][0]).toBe("i died again 😭");
   });
 });

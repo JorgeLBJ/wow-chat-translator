@@ -4,6 +4,7 @@
 
 import { onlyLinks, protectLinks, protectMarkedLinks, restoreLinks, stripLinkMarkers, tidyLinks } from "./links.js";
 import { fixOcrWords } from "./ocr-fixes.js";
+import { replaceShortcodes } from "./emoji.js";
 import { looksSpanish } from "./language.js";
 import { channelTab } from "./channels.js";
 
@@ -44,7 +45,8 @@ export function createMessagePipeline({ getTranslator, send, isPaused, target = 
 
   return {
     addMessages(messages) {
-      for (const msg of messages) {
+      for (let msg of messages) {
+        msg = { ...msg, text: replaceShortcodes(msg.text) }; // :sob: -> emoji
         // Links ([Item], [Spell]...) are never translated: mask them, restore after.
         // OCR text: any [..] is taken as a link. Strip text: only links the addon marked.
         const original = ocrFixes ? fixOcrWords(tidyLinks(msg.text)) : stripLinkMarkers(msg.text);
