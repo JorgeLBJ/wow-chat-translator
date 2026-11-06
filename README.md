@@ -12,9 +12,10 @@ Traducción en tiempo real · Respuestas en un atajo · Gratis y de código abie
 
 </div>
 
-<!-- Screenshots go here once captured:
-![La ventana de chat traducido sobre WoW](docs/screenshots/overlay.png)
--->
+<p align="center">
+  <img src="docs/screenshots/overlay.png" alt="Chat de WoW traducido al español, con pestañas por canal y colores de clase" width="602">
+  <br><sub>Pasa el ratón por un mensaje para ver el original.</sub>
+</p>
 
 ---
 
@@ -42,6 +43,9 @@ y te deja contestar en inglés escribiendo en español.
 - 😄 **Emojis** como `:sob:` se ven como emojis de verdad.
 - ✍️ **Responde en inglés**: pulsa <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd>, escribe en español,
   pulsa Enter y la traducción queda copiada. En WoW: <kbd>Enter</kbd>, <kbd>Ctrl</kbd>+<kbd>V</kbd>, <kbd>Enter</kbd>.
+
+  <img src="docs/screenshots/compose.png" alt="Escribes en español y la respuesta en inglés queda copiada" width="480">
+
 - ⏸️ **Pausa** cuando quieras: en pausa, haz clic en un mensaje para traducir solo ese.
 - 📌 **Siempre visible** sobre el juego, o en la bandeja del sistema cuando no juegas.
 - 🧩 **Instala el addon por ti** en todas tus versiones de WoW y lo mantiene actualizado.

@@ -118,6 +118,12 @@ impl OverlayApp {
                     let samples = [
                         ("General", Some("general"), "PALADIN", "Rj", "metro lineal, wer kommt mit?", "metro lineal, ¿quién viene?", "de"),
                         ("Trade", Some("trade"), "MAGE", "Slickback", "TANK LFM and HEALER SFK!", "¡TANQUE LFM y SANADOR SFK!", "en"),
+                        ("Guild", Some("guild"), "PRIEST", "Lunaria", "gg everyone, see you at raid tonight 😄", "gg a todos, nos vemos en la banda esta noche 😄", "en"),
+                        ("Party", Some("group"), "WARRIOR", "Thorgar", "wait for mana before the next pull pls", "esperad a tener maná antes del siguiente pull, por favor", "en"),
+                        ("Whisper", Some("whisper"), "ROGUE", "Nyxie", "salut ! tu peux m'aider pour la quête ?", "¡hola! ¿me puedes ayudar con la misión?", "fr"),
+                        ("General", Some("general"), "DRUID", "Folhaverde", "alguém sabe onde fica o treinador de herbalismo?", "¿alguien sabe dónde está el instructor de herboristería?", "pt"),
+                        ("Raid", Some("group"), "SHAMAN", "Kazrak", "bloodlust on pull, everyone stack behind the boss", "ansia de sangre al empezar, todos juntos detrás del jefe", "en"),
+                        ("Trade", Some("trade"), "HUNTER", "Arrowind", "WTS [Copper Ore] x20, pst", "Vendo [Mineral de cobre] x20, susúrrame", "en"),
                     ];
                     for (i, (channel, tab, class, player, original, translated, lang)) in samples.into_iter().enumerate() {
                         let item = OverlayItem {
@@ -139,7 +145,7 @@ impl OverlayApp {
                     }
                 }
                 _ if part == "compose" => {
-                    self.compose.text = "hola, ¿qué tal? → listo".into();
+                    self.compose.text = "hola, ¿qué tal?".into();
                     self.compose.preview = Some((copied_message("hello, how are you?"), COPIED));
                 }
                 _ => {}
@@ -294,7 +300,8 @@ impl OverlayApp {
                 .auto_shrink([false, false])
                 .scroll_source(egui::containers::scroll_area::ScrollSource { drag: false, ..Default::default() });
             if std::mem::take(&mut self.scroll_to_bottom) {
-                area = area.vertical_scroll_offset(f32::MAX);
+                // A large finite offset (egui clamps it): f32::MAX made the content height NaN.
+                area = area.vertical_scroll_offset(1.0e9);
             }
             area.show(ui, |ui| {
                 ui.style_mut().text_styles.insert(TextStyle::Body, FontId::proportional(font_size));
