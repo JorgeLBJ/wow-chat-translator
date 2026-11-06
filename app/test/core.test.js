@@ -445,3 +445,12 @@ describe("claude code translator timeout", () => {
     await expect(createClaudeCodeTranslator({ model: "m", queryFn, timeoutMs: 30 }).translate("hi", "es")).rejects.toThrow(/tiempo|time/i);
   });
 });
+
+describe("claude code translator executable", () => {
+  it("runs the user's installed Claude Code when a path is given", async () => {
+    const queryFn = vi.fn(async function* () { yield { type: "result", subtype: "success", is_error: false, result: "LANG: en\nTEXT: hola" }; });
+    const exe = "C:/Users/x/.local/bin/claude.exe";
+    await createClaudeCodeTranslator({ model: "m", queryFn, executablePath: exe }).translate("hi", "es");
+    expect(queryFn.mock.calls[0][0].options.pathToClaudeCodeExecutable).toBe(exe);
+  });
+});

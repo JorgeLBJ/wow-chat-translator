@@ -1,6 +1,7 @@
 // Translator that runs Claude Code through the official Claude Agent SDK, so it uses
 // the Claude subscription the user is logged in with (`claude auth login`) and draws
-// from that plan's usage limits. Each message starts a short Claude Code process,
+// from that plan's usage limits. It runs the user's own installed `claude`
+// (executablePath), not the large native binary the SDK can bundle. Each message starts a short Claude Code process,
 // so it is slower than an API key and queries are capped to a small concurrency.
 
 import { query } from "@anthropic-ai/claude-agent-sdk";
@@ -39,6 +40,7 @@ export function createClaudeCodeTranslator({
   queryFn = query,
   concurrency = 2,
   timeoutMs = 30_000,
+  executablePath,
 }) {
   const limit = createLimiter(concurrency);
 
@@ -62,6 +64,7 @@ export function createClaudeCodeTranslator({
         settingSources: [], // ignore the user's CLAUDE.md, hooks and settings
         strictMcpConfig: true, // and their MCP servers
         maxTurns: 1,
+        ...(executablePath ? { pathToClaudeCodeExecutable: executablePath } : {}),
       },
     });
     let result = null;

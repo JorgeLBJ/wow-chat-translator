@@ -1,5 +1,5 @@
 import { app, BrowserWindow, Menu, Tray, clipboard, globalShortcut, ipcMain, nativeImage, safeStorage, screen } from "electron";
-import { execFile, spawn } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import fs from "node:fs";
 import path from "node:path";
@@ -100,13 +100,37 @@ function readApiKey(provider, baseUrl) {
   }
 }
 
+// The Claude Code provider runs the user's own installed `claude` CLI. Found with
+// `where`, falling back to the default install location of the native installer.
+let claudeExe;
+function findClaudeExecutable() {
+  if (claudeExe !== undefined) return claudeExe;
+  claudeExe = null;
+  try {
+    const found = execFileSync("where", ["claude"], { encoding: "utf8", windowsHide: true })
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .find((l) => /\.(exe|cmd)$/i.test(l));
+    if (found) claudeExe = found;
+  } catch {
+    // not on PATH
+  }
+  const fallback = path.join(app.getPath("home"), ".local", "bin", "claude.exe");
+  if (!claudeExe && fs.existsSync(fallback)) claudeExe = fallback;
+  return claudeExe;
+}
+
 function llmFor(settings, apiKey) {
   if (settings.provider === "anthropic") {
     if (!apiKey) throw new Error("Falta la clave API de Anthropic");
     return createAnthropicTranslator({ apiKey, model: settings.model || ANTHROPIC_DEFAULT_MODEL });
   }
   if (settings.provider === "claudecode") {
-    return createClaudeCodeTranslator({ model: settings.model || CLAUDE_CODE_MODELS[0] });
+    const executablePath = findClaudeExecutable();
+    if (!executablePath) {
+      throw new Error("Claude Code no está instalado en este PC (instálalo y ejecuta `claude auth login`)");
+    }
+    return createClaudeCodeTranslator({ model: settings.model || CLAUDE_CODE_MODELS[0], executablePath });
   }
   const baseUrl = effectiveUrl(settings.provider, settings.baseUrl);
   if (!baseUrl) throw new Error("Falta la URL del servidor");
