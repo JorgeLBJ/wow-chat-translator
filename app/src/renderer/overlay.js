@@ -75,10 +75,26 @@ function render(item) {
   who.style.color = CLASS_COLORS[item.cls] ?? "#d0d4da";
   body.append(ch, who);
 
+  // Untranslated messages (translation paused, or it failed) are clickable: one
+  // click translates just that message.
+  const canTranslate = item.status === "paused" || item.status === "error";
+  node.classList.toggle("can-translate", canTranslate);
+  node.onclick = canTranslate
+    ? () => {
+        item.status = "pending";
+        render(item);
+        window.wct.translateMessage(item.id);
+      }
+    : null;
+  if (canTranslate) node.title = "Clic para traducir este mensaje";
+  else node.removeAttribute("title");
+
   if (item.status === "error") {
-    const badge = el("span", "lg err", "error");
-    badge.title = item.error ?? "";
+    const badge = el("span", "lg err", "error · traducir");
+    badge.title = `${item.error ?? ""} (clic para reintentar)`;
     body.append(badge);
+  } else if (item.status === "paused") {
+    body.append(el("span", "lg paused", "⏸ traducir"));
   } else if (item.lang) {
     const badge = el("span", "lg", showTranslated ? `${item.lang.toUpperCase()}→ES` : item.lang.toUpperCase());
     if (item.provider) badge.title = item.fallbackReason ? `${item.provider} (LLM falló: ${item.fallbackReason})` : item.provider;
@@ -167,6 +183,7 @@ $("min").onclick = () => window.wct.minimize();
 $("max").onclick = () => window.wct.maximize();
 $("close").onclick = () => window.wct.close();
 $("pin").onclick = () => savePrefs({ alwaysOnTop: !prefs.alwaysOnTop });
+$("pause").onclick = () => savePrefs({ translationPaused: !prefs.translationPaused });
 window.wct.onMaximized((maxed) => {
   document.body.classList.toggle("maxed", maxed);
   $("max").textContent = maxed ? "❐" : "☐";
@@ -189,6 +206,11 @@ function applyPrefs() {
   $("list").style.setProperty("--fs", `${prefs.fontSize}px`);
   $("pin").classList.toggle("on", prefs.alwaysOnTop);
   $("pin").dataset.tip = prefs.alwaysOnTop ? "Siempre encima: activado" : "Siempre encima: desactivado";
+  const paused = Boolean(prefs.translationPaused);
+  $("pause").classList.toggle("on", paused);
+  $("pause").textContent = paused ? "▶" : "⏸";
+  $("pause").dataset.tip = paused ? "Reanudar traducción" : "Pausar traducción";
+  $("paused-note").textContent = paused ? "⏸ En pausa · clic en un mensaje para traducir" : "";
 }
 
 const savePrefs = async (patch) => {

@@ -12,6 +12,7 @@ import { createFallbackTranslator } from "../src/core/translators/fallback.js";
 import { keyBinding } from "../src/core/key-binding.js";
 import { protectLinks, restoreLinks, tidyLinks, onlyLinks } from "../src/core/links.js";
 import { fixOcrWords } from "../src/core/ocr-fixes.js";
+import { createMessagePipeline } from "../src/core/pipeline.js";
 import { systemPrompt } from "../src/core/translators/prompt.js";
 import { createAnthropicTranslator } from "../src/core/translators/anthropic.js";
 import { createClaudeCodeTranslator } from "../src/core/translators/claude-code.js";
@@ -528,5 +529,98 @@ describe("claude code translator abort", () => {
     };
     await createClaudeCodeTranslator({ model: "m", queryFn, timeoutMs: 1000 }).translate("hi", "es");
     expect(controller.signal.aborted).toBe(false);
+  });
+});
+
+describe("message pipeline (pause + translate on demand)", () => {
+  const msg = (seq, text) => ({ seq, channel: "Trade", cls: "MAGE", player: "Ana", text });
+  const setup = ({ paused = false, translate } = {}) => {
+    const sent = [];
+    const tr = { translate: vi.fn(translate ?? (async (t) => ({ text: `ES(${t})`, source: "en", provider: "X" }))) };
+    let isPaused = paused;
+    const p = createMessagePipeline({ getTranslator: () => tr, send: (ch, data) => sent.push([ch, data]), isPaused: () => isPaused });
+    return { p, tr, sent, setPaused: (v) => { isPaused = v; } };
+  };
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+
+  it("translates new messages and keeps links untranslated", async () => {
+    const { p, sent } = setup();
+    p.addMessages([msg(1, "wts [Arcanite Bar] cheap")]);
+    await flush();
+    expect(sent[0]).toEqual(["chat:add", expect.objectContaining({ id: 1, status: "pending", original: "wts [Arcanite Bar] cheap" })]);
+    expect(sent[1]).toEqual(["chat:update", expect.objectContaining({ id: 1, status: "done", translated: "ES(wts [Arcanite Bar] cheap)" })]);
+  });
+
+  it("does not translate while paused and marks the message as paused", async () => {
+    const { p, tr, sent } = setup({ paused: true });
+    p.addMessages([msg(1, "anyone know where the trainer is?")]);
+    await flush();
+    expect(tr.translate).not.toHaveBeenCalled();
+    expect(sent).toEqual([["chat:add", expect.objectContaining({ id: 1, status: "paused" })]]);
+  });
+
+  it("translates one paused message on demand", async () => {
+    const { p, tr, sent } = setup({ paused: true });
+    p.addMessages([msg(1, "need a tank"), msg(2, "lf healer")]);
+    expect(p.translateById(2)).toBe(true);
+    await flush();
+    expect(tr.translate).toHaveBeenCalledTimes(1);
+    expect(sent.slice(2)).toEqual([
+      ["chat:update", { id: 2, status: "pending" }],
+      ["chat:update", expect.objectContaining({ id: 2, status: "done", translated: "ES(lf healer)" })],
+    ]);
+  });
+
+  it("only translates messages that arrive after resuming", async () => {
+    const { p, tr, setPaused } = setup({ paused: true });
+    p.addMessages([msg(1, "need a tank")]);
+    setPaused(false);
+    p.addMessages([msg(2, "lf healer")]);
+    await flush();
+    expect(tr.translate).toHaveBeenCalledTimes(1);
+    expect(tr.translate.mock.calls[0][0]).toBe("lf healer");
+  });
+
+  it("does not send Spanish or link-only messages to the translator, paused or not", async () => {
+    const { p, tr, sent } = setup({ paused: true });
+    p.addMessages([msg(1, "alguien para la mazmorra?"), msg(2, "[Arcanite Bar]")]);
+    await flush();
+    expect(tr.translate).not.toHaveBeenCalled();
+    expect(sent.map(([, d]) => d.status)).toEqual(["done", "done"]);
+  });
+
+  it("lets a failed translation be retried on demand", async () => {
+    let fail = true;
+    const { p, sent } = setup({ translate: async (t) => { if (fail) throw new Error("down"); return { text: "ok", source: "en" }; } });
+    p.addMessages([msg(1, "hello there")]);
+    await flush();
+    expect(sent.at(-1)).toEqual(["chat:update", { id: 1, status: "error", error: "down" }]);
+    fail = false;
+    expect(p.translateById(1)).toBe(true);
+    await flush();
+    expect(sent.at(-1)).toEqual(["chat:update", expect.objectContaining({ id: 1, status: "done", translated: "ok" })]);
+  });
+
+  it("returns false for unknown or already translated messages", async () => {
+    const { p } = setup();
+    p.addMessages([msg(1, "hello there")]);
+    await flush();
+    expect(p.translateById(1)).toBe(false);
+    expect(p.translateById(99)).toBe(false);
+  });
+});
+
+describe("message pipeline double click", () => {
+  it("ignores a second request while the same message is still being translated", async () => {
+    const sent = [];
+    let release;
+    const tr = { translate: vi.fn(() => new Promise((r) => { release = () => r({ text: "ok", source: "en" }); })) };
+    const p = createMessagePipeline({ getTranslator: () => tr, send: (c, d) => sent.push([c, d]), isPaused: () => true });
+    p.addMessages([{ seq: 1, channel: "Say", cls: null, player: "A", text: "hello there" }]);
+    expect(p.translateById(1)).toBe(true);
+    expect(p.translateById(1)).toBe(false);
+    release();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(tr.translate).toHaveBeenCalledTimes(1);
   });
 });

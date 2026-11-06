@@ -30,6 +30,16 @@
   #pin:not(.on)::before { content: ""; position: absolute; left: 6px; right: 6px; top: 50%; height: 2px;
     background: #cbd5e1; transform: rotate(-45deg); border-radius: 1px; }
   #pin:not(.on):hover { opacity: .8; }
+  /* Translation pause: amber while paused. */
+  #pause.on { background: rgba(245,158,11,.25); color: #fbbf24; }
+  .lg.paused { background: rgba(245,158,11,.2); color: #fcd34d; }
+  .m.can-translate { cursor: pointer; }
+  .m.can-translate:hover { background: rgba(59,130,246,.14); }
+  #paused-note { color: #fbbf24; }
+  #paused-note:empty { display: none; }
+  /* Footer texts give way (with an ellipsis) before the opacity control does. */
+  .ft > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ft input[type=range] { flex: none; }
   .ib.x:hover { background: #c42b1c; }
   .sep { width: 1px; height: 16px; background: rgba(255,255,255,.12); }
   /* Native title tooltips do not show on an unfocused window, so draw our own. */
@@ -98,6 +108,7 @@
     </div>
     <span class="sep"></span>
     <button class="ib" id="dock" data-tip="Tapar el panel del addon">⧉</button>
+    <button class="ib" id="pause" data-tip="Pausar traducción">⏸</button>
     <button class="ib" id="pin" data-tip="Siempre encima">📌</button>
     <button class="ib" id="gear" data-tip="Ajustes">⚙</button>
     <span class="sep"></span>
@@ -119,6 +130,7 @@
   </div>
   <div class="ft">
     <span><span class="dot" id="dot"></span><span id="ocr-label">OCR</span> · <span id="provider-label">Google</span></span>
+    <span id="paused-note"></span>
     <span id="status"></span>
     <span style="flex:1"></span>
     Opacidad <input type="range" id="opacity" min="40" max="100">

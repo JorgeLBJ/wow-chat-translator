@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld("wct", {
   openSettings: () => ipcRenderer.send("settings:open"),
   closeSettings: () => ipcRenderer.send("settings:close"),
   clearMessages: () => ipcRenderer.send("chat:clear"),
+  translateMessage: (id) => ipcRenderer.send("chat:translate", id),
   onClearMessages: on("chat:clear"),
   onPrefsChanged: on("prefs:changed"),
   debugUi: (info) => ipcRenderer.send("debug:ui", info),

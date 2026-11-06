@@ -5,9 +5,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseLines } from "./core/parser.js";
+import { createMessagePipeline } from "./core/pipeline.js";
 import { createTracker } from "./core/tracker.js";
-import { looksSpanish } from "./core/language.js";
-import { channelTab } from "./core/channels.js";
 import { createGameWatcher } from "./core/game-watcher.js";
 import { createPresence } from "./core/presence.js";
 import { createGoogleTranslator } from "./core/translators/google.js";
@@ -17,8 +16,6 @@ import { createFallbackTranslator } from "./core/translators/fallback.js";
 import { ANTHROPIC_DEFAULT_MODEL, createAnthropicTranslator } from "./core/translators/anthropic.js";
 import { CLAUDE_CODE_MODELS, createClaudeCodeTranslator } from "./core/translators/claude-code.js";
 import { keyBinding } from "./core/key-binding.js";
-import { onlyLinks, protectLinks, restoreLinks, tidyLinks } from "./core/links.js";
-import { fixOcrWords } from "./core/ocr-fixes.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const WORKER = path.join(here, "..", "ocr", "ocr-worker.ps1");
@@ -26,7 +23,7 @@ const DETECT_PANEL = path.join(here, "..", "ocr", "detect-panel.ps1");
 const TARGET_LANG = "es";
 const GAME_EXE = "Wow.exe";
 const GAME_CHECK_MS = 5000;
-const DEFAULT_PREFS = { fontSize: 13, opacity: 1, alwaysOnTop: true, autoStart: true };
+const DEFAULT_PREFS = { fontSize: 13, opacity: 1, alwaysOnTop: true, autoStart: true, translationPaused: false };
 const STARTED_HIDDEN = process.argv.includes("--hidden");
 
 // Config -----------------------------------------------------------------
@@ -170,7 +167,6 @@ const providerLabel = () => {
   const s = translatorSettings();
   return s.provider === "google" || !s.model ? "Google" : `${PROVIDERS[s.provider]?.label ?? "LLM"} · ${s.model}`;
 };
-let nextId = 1;
 
 // Diagnostic log (userData/debug.log): OCR reads and what the overlay received, so a
 // "stuck" report can be checked against evidence. Small: rotated at 2 MB.
@@ -187,47 +183,19 @@ function debug(...parts) {
   }
 }
 
+// Paused translation keeps new messages untranslated; any of them can be translated
+// later by clicking it in the overlay.
+const pipeline = createMessagePipeline({
+  getTranslator: () => translator,
+  send,
+  isPaused: () => prefs().translationPaused,
+});
+
 function handleOcrLines(lines) {
   const parsed = parseLines(lines);
   const fresh = tracker.newMessages(parsed);
   debug("ocr", { lines: lines.length, parsed: parsed.map((m) => m.seq), fresh: fresh.map((m) => m.seq) });
-  for (const msg of fresh) {
-    msg.text = fixOcrWords(tidyLinks(msg.text));
-    // Links ([Item], [Spell]...) are never translated: mask them, restore after.
-    const { text: masked, links } = protectLinks(msg.text);
-    const item = {
-      id: nextId++,
-      time: Date.now(),
-      channel: msg.channel,
-      tab: channelTab(msg.channel),
-      cls: msg.cls,
-      player: msg.player,
-      original: msg.text,
-      translated: null,
-      lang: null,
-      status: "pending",
-    };
-    if (onlyLinks(masked) || looksSpanish(masked)) {
-      send("chat:add", { ...item, lang: "es", status: "done" });
-      continue;
-    }
-    send("chat:add", item);
-    translator
-      .translate(masked, TARGET_LANG)
-      .then((res) => {
-        const r = { ...res, text: restoreLinks(res.text, links) };
-        const same = r.source === TARGET_LANG || r.text.trim().toLowerCase() === msg.text.trim().toLowerCase();
-        send("chat:update", {
-          id: item.id,
-          lang: r.source === "auto" ? null : r.source,
-          translated: same ? null : r.text,
-          provider: r.provider,
-          fallbackReason: r.fallbackReason,
-          status: "done",
-        });
-      })
-      .catch((err) => send("chat:update", { id: item.id, status: "error", error: err.message }));
-  }
+  pipeline.addMessages(fresh);
 }
 
 // OCR worker --------------------------------------------------------------
@@ -687,6 +655,7 @@ function openSettings() {
 ipcMain.on("settings:open", () => openSettings());
 ipcMain.on("settings:close", () => settingsWin?.close());
 ipcMain.on("chat:clear", () => send("chat:clear"));
+ipcMain.on("chat:translate", (_e, id) => pipeline.translateById(Number(id)));
 ipcMain.on("debug:ui", (_e, info) => debug("ui", info));
 ipcMain.on("app:quit", () => {
   quitting = true;
