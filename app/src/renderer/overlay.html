@@ -24,6 +24,12 @@
     border-radius: 5px; color: #9aa3ad; cursor: pointer; position: relative; font-size: 13px; }
   .ib:hover { background: rgba(255,255,255,.1); color: #fff; }
   .ib.on { color: #60a5fa; }
+  /* The pin is an emoji, so CSS color cannot recolor it: show the state explicitly. */
+  #pin.on { background: rgba(59,130,246,.22); }
+  #pin:not(.on) { filter: grayscale(1); opacity: .45; }
+  #pin:not(.on)::before { content: ""; position: absolute; left: 6px; right: 6px; top: 50%; height: 2px;
+    background: #cbd5e1; transform: rotate(-45deg); border-radius: 1px; }
+  #pin:not(.on):hover { opacity: .8; }
   .ib.x:hover { background: #c42b1c; }
   .sep { width: 1px; height: 16px; background: rgba(255,255,255,.12); }
   /* Native title tooltips do not show on an unfocused window, so draw our own. */
