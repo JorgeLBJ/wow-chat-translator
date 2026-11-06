@@ -218,11 +218,19 @@ function startWorker() {
 function onPanelPresence(present) {
   panelPresent = present;
   if (present) {
-    if (!userHidden) overlay?.showInactive();
+    if (!userHidden) revealOverlay();
   } else {
     overlay?.hide();
   }
   updateTray();
+}
+
+// Show without stealing focus and force a repaint (a transparent window may keep
+// showing its last frame after hide/show until something moves it).
+function revealOverlay() {
+  if (!overlay) return;
+  overlay.showInactive();
+  overlay.webContents.invalidate();
 }
 
 // Windows -----------------------------------------------------------------
@@ -242,7 +250,9 @@ function createOverlay() {
     resizable: true,
     show: false,
     title: "WoW Chat Translator",
-    webPreferences: { preload: path.join(here, "preload.cjs") },
+    // Keep rendering while hidden: otherwise the window can reappear showing stale
+    // content until it is moved (seen after a /reload loading screen).
+    webPreferences: { preload: path.join(here, "preload.cjs"), backgroundThrottling: false },
   });
   applyAlwaysOnTop();
   // Invisible to screen capture, so the overlay can sit on top of the addon panel
@@ -347,7 +357,7 @@ function openCalibration() {
   calibration.on("closed", () => {
     calibration = null;
     ipcMain.removeAllListeners("calib:done");
-    overlay?.showInactive();
+    revealOverlay();
     if (watcher?.running) startWorker();
   });
 
@@ -433,6 +443,7 @@ function applyAutoStart() {
 function showOverlay() {
   userHidden = false;
   overlay?.show();
+  overlay?.webContents.invalidate();
 }
 
 function updateTray() {
