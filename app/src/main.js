@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createMessagePipeline } from "./core/pipeline.js";
 import { findStrip } from "./core/strip-reader.js";
+import { createPresenceGate } from "./core/presence-gate.js";
 import { createGameWatcher } from "./core/game-watcher.js";
 import { createGoogleTranslator } from "./core/translators/google.js";
 import { createCachedTranslator } from "./core/cache.js";
@@ -212,6 +213,9 @@ function startWorker() {
   worker = proc;
   const layout = {}; // cell size and offset found last time
   let lastSeq = null;
+  // Hide only after 2 s without the strip, never while the overlay has the focus:
+  // focusing it can make a fullscreen WoW stop drawing (see presence-gate.js).
+  const gate = createPresenceGate({ delayMs: 2000, isFocused: () => Boolean(overlay?.isFocused()), onChange: onPanelPresence });
   send("ocr:state", "starting");
   createInterface({ input: proc.stdout }).on("line", (line) => {
     let data;
@@ -229,12 +233,12 @@ function startWorker() {
     if (data.strip === false) {
       debug("strip absent");
       send("ocr:state", "nostrip");
-      return onPanelPresence(false);
+      return gate.lost();
     }
     if (!data.patch) return;
     const frame = findStrip(Buffer.from(data.patch, "base64"), data.w, data.h, layout);
     if (!frame) return debug("strip undecodable");
-    if (panelPresent !== true) onPanelPresence(true);
+    gate.seen();
     send("ocr:state", "ok");
     status("");
     if (frame.seq === lastSeq) return;
