@@ -8,7 +8,7 @@
 ;   AppGuid       installer identity (overridden only in tests, so they never touch a real install)
 
 #define AppName "WoW Chat Translator"
-#define AppVersion "0.2.2"
+#define AppVersion "0.2.3"
 #define AppPublisher "Jorge Luis Bustamante Jara"
 #define AppExeName "wow-chat-translator.exe"
 #ifndef SourceExe
@@ -26,10 +26,14 @@
 #ifndef AppGuid
   #define AppGuid "6FE0FF5C-CEFC-4E1C-A0D1-93EABDD9A45A"
 #endif
+; Where the app records that the user turned autostart off (native/src/app/autostart.rs).
+#ifndef AppRegKey
+  #define AppRegKey "Software\WoW Chat Translator"
+#endif
 
 [Setup]
 AppId={{{#AppGuid}}
-; The autostart task is offered only on a fresh install (see IsFreshInstall).
+; The autostart task is offered (checked) unless the user turned it off (see OfferAutostart).
 UsePreviousTasks=no
 AppName={#AppName}
 AppVersion={#AppVersion}
@@ -81,7 +85,7 @@ english.Options=Options:
 english.DeleteConfig=Also delete your settings (%1)?%n%nChoose No to keep them if you plan to reinstall.
 
 [Tasks]
-Name: "autostart"; Description: "{cm:Autostart}"; GroupDescription: "{cm:Options}"; Check: IsFreshInstall
+Name: "autostart"; Description: "{cm:Autostart}"; GroupDescription: "{cm:Options}"; Check: OfferAutostart
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
@@ -96,6 +100,8 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: deskto
 ; Same command line the app writes (native/src/app/autostart.rs: "<exe>" --hidden).
 [Registry]
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "{#RunValueName}"; ValueData: """{app}\{#AppExeName}"" --hidden"; Tasks: autostart
+; The app's own key (autostart opt-out) goes away with the app.
+Root: HKCU; Subkey: "{#AppRegKey}"; Flags: uninsdeletekey
 
 [Run]
 Filename: "{app}\{#AppExeName}"; Description: "{cm:LaunchApp}"; Flags: postinstall nowait skipifsilent
@@ -106,7 +112,7 @@ const
 
 var
   { Set in InitializeSetup, before the install writes its uninstall entry. }
-  FreshInstall: Boolean;
+  OptedOut: Boolean;
 
 function AppIsRunning(): Boolean;
 begin
@@ -151,11 +157,10 @@ begin
     SuppressibleMsgBox(CustomMessage('AppStillRunning'), mbError, MB_OK, IDOK);
 end;
 
-function IsFreshInstall(): Boolean; forward;
-
 function InitializeSetup(): Boolean;
 begin
-  FreshInstall := IsFreshInstall();
+  { Read before anything is written, so the task list and CurStepChanged agree. }
+  OptedOut := RegValueExists(HKCU, '{#AppRegKey}', 'AutostartOptOut');
   Result := CloseRunningApp();
 end;
 
@@ -181,21 +186,22 @@ begin
     Log('Autostart value kept (another install): ' + Value);
 end;
 
-{ True when no earlier version is installed (its uninstall entry is missing). Used as
-  the Check of the "autostart" task, which is evaluated before any file is copied. }
-function IsFreshInstall(): Boolean;
+{ "Iniciar con Windows" is offered, checked, on new installs and upgrades, unless the
+  user turned it off in the app (Ajustes or tray): then there is no task, [Registry]
+  writes nothing and nothing is removed, so the choice is kept. }
+function OfferAutostart(): Boolean;
 begin
-  Result := not RegKeyExists(HKCU,
-    'Software\Microsoft\Windows\CurrentVersion\Uninstall\{' + '{#AppGuid}' + '}_is1');
+  Result := not OptedOut;
 end;
 
-{ "Iniciar con Windows" is offered (checked) only on a fresh install: unchecked there
-  means "don't start with Windows". An upgrade has no such task, so [Registry] writes
-  nothing and nothing is removed: the choice made in the app (Ajustes or tray) is kept. }
+{ Unchecking the offered box is the same choice as turning it off in the app. }
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
-  if (CurStep = ssPostInstall) and FreshInstall and not WizardIsTaskSelected('autostart') then
+  if (CurStep = ssPostInstall) and not OptedOut and not WizardIsTaskSelected('autostart') then
+  begin
     RemoveAutostartIfOurs();
+    RegWriteDWordValue(HKCU, '{#AppRegKey}', 'AutostartOptOut', 1);
+  end;
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);

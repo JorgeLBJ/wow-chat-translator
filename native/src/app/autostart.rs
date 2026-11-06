@@ -12,6 +12,11 @@ use windows::Win32::System::Registry::{
 
 const RUN_KEY: PCWSTR = w!("Software\\Microsoft\\Windows\\CurrentVersion\\Run");
 const VALUE: PCWSTR = w!("WoW Chat Translator");
+/// `HKCU\Software\WoW Chat Translator` value `AutostartOptOut` = 1 while the user has
+/// turned "Iniciar con Windows" off. The installer reads it: it turns autostart on for
+/// new installs and upgrades unless this is set (installer/wow-chat-translator.iss).
+const APP_KEY: PCWSTR = w!("Software\\WoW Chat Translator");
+const OPT_OUT: PCWSTR = w!("AutostartOptOut");
 
 /// The command registered to run at login.
 pub fn command_line(exe: &Path) -> String {
@@ -66,8 +71,29 @@ pub fn set_enabled(enabled: bool) -> Result<(), String> {
         let _ = RegCloseKey(key);
     }
     if err == ERROR_SUCCESS {
+        remember_opt_out(!enabled);
         Ok(())
     } else {
         Err(format!("registro: error {}", err.0))
+    }
+}
+
+/// Records (or clears) that the user turned autostart off, so an upgrade keeps it off.
+fn remember_opt_out(opted_out: bool) {
+    use windows::Win32::System::Registry::{RegCreateKeyExW, REG_DWORD, REG_OPTION_NON_VOLATILE};
+    let mut key = HKEY::default();
+    let err = unsafe {
+        RegCreateKeyExW(HKEY_CURRENT_USER, APP_KEY, None, None, REG_OPTION_NON_VOLATILE, KEY_SET_VALUE, None, &mut key, None)
+    };
+    if err != ERROR_SUCCESS {
+        return;
+    }
+    unsafe {
+        if opted_out {
+            let _ = RegSetValueExW(key, OPT_OUT, None, REG_DWORD, Some(&1u32.to_le_bytes()));
+        } else {
+            let _ = RegDeleteValueW(key, OPT_OUT);
+        }
+        let _ = RegCloseKey(key);
     }
 }
