@@ -16,7 +16,7 @@
     border-bottom: 1px solid rgba(255,255,255,.07); -webkit-app-region: drag; user-select: none; }
   .tb .t { flex: 1; font-weight: 600; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .tb .t small { font-weight: 400; color: #7d8590; margin-left: 6px; }
-  .tb button, .seg, .menu { -webkit-app-region: no-drag; }
+  .tb button, .seg { -webkit-app-region: no-drag; }
   .seg { display: flex; background: rgba(255,255,255,.07); border-radius: 6px; padding: 2px; }
   .seg button { all: unset; cursor: pointer; padding: 2px 9px; border-radius: 5px; font-size: 11px; color: #aab; }
   .seg button.on { background: #3b82f6; color: #fff; }
@@ -31,14 +31,6 @@
     background: #0b0f17; border: 1px solid #3b82f6; color: #fff; font-size: 11px; padding: 3px 8px; border-radius: 5px;
     z-index: 20; pointer-events: none; }
 
-  .menu { position: absolute; top: 40px; right: 70px; z-index: 30; background: #0f141d; border: 1px solid rgba(255,255,255,.15);
-    border-radius: 8px; padding: 4px; min-width: 230px; box-shadow: 0 10px 30px rgba(0,0,0,.5); display: none; }
-  .menu.open { display: block; }
-  .menu button { all: unset; display: flex; justify-content: space-between; gap: 12px; width: 100%; box-sizing: border-box;
-    padding: 6px 10px; border-radius: 5px; cursor: pointer; font-size: 12px; }
-  .menu button:hover:not([disabled]) { background: rgba(255,255,255,.08); }
-  .menu button[disabled] { cursor: default; color: #9aa3ad; }
-  .menu kbd { color: #7d8590; font: 11px "Segoe UI"; }
 
   /* tabs */
   .tabs { display: flex; gap: 2px; padding: 6px 10px 0; border-bottom: 1px solid rgba(255,255,255,.07); overflow-x: auto; }
@@ -90,7 +82,7 @@
   .modal.open { display: block; }
   .sheet { margin: 12px auto; width: min(460px, calc(100% - 24px)); background: #0f141d; border: 1px solid rgba(255,255,255,.14);
     border-radius: 8px; padding: 12px 14px; box-sizing: border-box; }
-  .sheet h3 { margin: 0 0 10px; font-size: 13px; }
+  .sheet h3 { margin: 0 0 4px; font-size: 13px; }
   .sheet label { display: block; font-size: 11px; color: #9aa3ad; margin: 8px 0 3px; }
   .sheet input, .sheet select { width: 100%; box-sizing: border-box; background: rgba(255,255,255,.06); color: #eee;
     border: 1px solid rgba(255,255,255,.12); border-radius: 6px; padding: 5px 8px; font: 12px "Segoe UI", sans-serif; outline: none; }
@@ -106,7 +98,26 @@
   .actions { display: flex; gap: 6px; justify-content: flex-end; margin-top: 12px; }
   #t-result { font-size: 11.5px; margin-top: 8px; min-height: 1em; word-wrap: break-word; }
   #t-result.ok { color: #86efac; } #t-result.err { color: #fca5a5; }
-  .llm-only[hidden] { display: none; }
+  .llm-only[hidden], .pane[hidden] { display: none; }
+  .sheet-head { display: flex; align-items: center; justify-content: space-between; }
+  .sheet-head h3 { margin: 0; }
+  .stabs { display: flex; gap: 2px; margin: 8px 0 6px; border-bottom: 1px solid rgba(255,255,255,.08); }
+  .stab { all: unset; cursor: pointer; padding: 5px 10px; font-size: 12px; color: #8b949e; border-radius: 6px 6px 0 0; }
+  .stab:hover { color: #ddd; }
+  .stab.on { color: #fff; background: rgba(255,255,255,.07); }
+  .row-set { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 0;
+    border-bottom: 1px solid rgba(255,255,255,.05); font-size: 12px; }
+  .row-set b { font-weight: 600; }
+  .row-set input[type=range] { accent-color: #3b82f6; width: 140px; }
+  .switch { position: relative; width: 34px; height: 18px; flex: none; margin: 0; }
+  .switch input { opacity: 0; width: 0; height: 0; position: absolute; }
+  .switch span { position: absolute; inset: 0; cursor: pointer; background: rgba(255,255,255,.15); border-radius: 9px; transition: .15s; }
+  .switch span::before { content: ""; position: absolute; width: 14px; height: 14px; left: 2px; top: 2px; background: #fff; border-radius: 50%; transition: .15s; }
+  .switch input:checked + span { background: #3b82f6; }
+  .switch input:checked + span::before { transform: translateX(16px); }
+  .keys { font-size: 12px; padding: 9px 0; border-bottom: 1px solid rgba(255,255,255,.05); line-height: 1.8; }
+  .keys kbd { font: 11px "Segoe UI"; background: rgba(255,255,255,.08); border-radius: 4px; padding: 1px 6px; margin-right: 6px; }
+  .btn.danger:hover { background: #c42b1c; color: #fff; }
 
   #grip { position: absolute; right: 0; bottom: 0; width: 16px; height: 16px; cursor: nwse-resize; z-index: 5;
     background: linear-gradient(135deg, transparent 50%, rgba(255,255,255,.35) 50%, rgba(255,255,255,.35) 60%, transparent 60%,
@@ -131,14 +142,6 @@
     <button class="ib" id="max" data-tip="Maximizar">☐</button>
     <button class="ib x" id="close" data-tip="Ocultar (sigue en la bandeja)">✕</button>
   </div>
-  <div class="menu" id="menu">
-    <button id="m-translator"><span>Traductor (Google / LLM)…</span><kbd></kbd></button>
-    <button id="m-calib"><span>Calibrar zona del panel</span><kbd>Ctrl+Shift+R</kbd></button>
-    <button id="m-dock"><span>Tapar el panel del addon</span><kbd>⧉</kbd></button>
-    <button id="m-clear"><span>Limpiar mensajes</span><kbd></kbd></button>
-    <button disabled><span>Alternar traducido/original</span><kbd>Ctrl+Shift+T</kbd></button>
-    <button disabled><span>Escribir mensaje</span><kbd>Ctrl+Shift+Enter</kbd></button>
-  </div>
   <div class="tabs" id="tabs"></div>
   <div id="list"></div>
   <div class="compose">
@@ -160,34 +163,88 @@
   </div>
   <div class="modal" id="settings">
     <div class="sheet">
-      <h3>Traductor</h3>
-      <label for="t-provider">Proveedor</label>
-      <select id="t-provider">
-        <option value="google">Google (gratis, sin configuración)</option>
-        <option value="openrouter">OpenRouter (LLM en la nube, con clave)</option>
-        <option value="lmstudio">LM Studio (LLM local)</option>
-        <option value="custom">Otro servidor compatible con OpenAI</option>
-      </select>
-      <div class="llm-only" id="t-llm">
-        <label for="t-url">URL del servidor</label>
-        <input id="t-url" spellcheck="false" autocomplete="off">
-        <label for="t-key">Clave API</label>
-        <input id="t-key" type="password" spellcheck="false" autocomplete="off">
-        <div class="hint" id="t-key-hint"></div>
-        <label for="t-model">Modelo</label>
-        <div class="inline">
-          <input id="t-model" list="t-models" spellcheck="false" autocomplete="off" placeholder="Escribe o carga la lista">
-          <button class="btn" id="t-load">Cargar modelos</button>
+      <div class="sheet-head">
+        <h3>Ajustes</h3>
+        <button class="ib" id="s-close" data-tip="Cerrar ajustes">✕</button>
+      </div>
+      <div class="stabs">
+        <button class="stab on" data-pane="p-translate">Traducción</button>
+        <button class="stab" data-pane="p-window">Ventana</button>
+        <button class="stab" data-pane="p-general">General</button>
+      </div>
+
+      <section class="pane" id="p-translate">
+        <label for="t-provider">Proveedor</label>
+        <select id="t-provider">
+          <option value="google">Google (gratis, sin configuración)</option>
+          <option value="openrouter">OpenRouter (LLM en la nube, con clave)</option>
+          <option value="lmstudio">LM Studio (LLM local)</option>
+          <option value="custom">Otro servidor compatible con OpenAI</option>
+        </select>
+        <div class="llm-only" id="t-llm">
+          <label for="t-url">URL del servidor</label>
+          <input id="t-url" spellcheck="false" autocomplete="off">
+          <label for="t-key">Clave API</label>
+          <input id="t-key" type="password" spellcheck="false" autocomplete="off">
+          <div class="hint" id="t-key-hint"></div>
+          <label for="t-model">Modelo</label>
+          <div class="inline">
+            <input id="t-model" list="t-models" spellcheck="false" autocomplete="off" placeholder="Escribe o carga la lista">
+            <button class="btn" id="t-load">Cargar modelos</button>
+          </div>
+          <datalist id="t-models"></datalist>
+          <div class="hint">Si el LLM falla o no responde, ese mensaje se traduce con Google.</div>
         </div>
-        <datalist id="t-models"></datalist>
-        <div class="hint">Si el LLM falla o no responde, ese mensaje se traduce con Google.</div>
-      </div>
-      <div id="t-result"></div>
-      <div class="actions">
-        <button class="btn" id="t-test">Probar</button>
-        <button class="btn" id="t-cancel">Cancelar</button>
-        <button class="btn primary" id="t-save">Guardar</button>
-      </div>
+        <div id="t-result"></div>
+        <div class="actions">
+          <button class="btn" id="t-test">Probar</button>
+          <button class="btn primary" id="t-save">Guardar traductor</button>
+        </div>
+      </section>
+
+      <section class="pane" id="p-window" hidden>
+        <div class="row-set">
+          <div><b>Siempre encima</b><div class="hint">La ventana se queda delante de WoW aunque hagas clic en el juego.</div></div>
+          <label class="switch"><input type="checkbox" id="w-ontop"><span></span></label>
+        </div>
+        <div class="row-set">
+          <div><b>Opacidad</b><div class="hint" id="w-opacity-val"></div></div>
+          <input type="range" id="w-opacity" min="40" max="100">
+        </div>
+        <div class="row-set">
+          <div><b>Tamaño del texto</b><div class="hint" id="w-font-val"></div></div>
+          <input type="range" id="w-font" min="10" max="22">
+        </div>
+        <div class="row-set">
+          <div><b>Zona del panel del addon</b><div class="hint">Vuelve a seleccionarla si moviste o cambiaste el tamaño del panel en WoW.</div></div>
+          <button class="btn" id="w-calib">Calibrar</button>
+        </div>
+        <div class="row-set">
+          <div><b>Tapar el panel</b><div class="hint">Coloca esta ventana justo encima del panel negro.</div></div>
+          <button class="btn" id="w-dock">Tapar</button>
+        </div>
+      </section>
+
+      <section class="pane" id="p-general" hidden>
+        <div class="row-set">
+          <div><b>Iniciar con Windows</b><div class="hint">Arranca oculta y aparece sola al abrir WoW.</div></div>
+          <label class="switch"><input type="checkbox" id="g-autostart"><span></span></label>
+        </div>
+        <div class="row-set">
+          <div><b>Mensajes</b><div class="hint">Borra la lista de mensajes de esta ventana.</div></div>
+          <button class="btn" id="g-clear">Limpiar</button>
+        </div>
+        <div class="keys">
+          <b>Atajos (solo con WoW abierto)</b>
+          <div><kbd>Ctrl+Shift+T</kbd> Traducido / Original</div>
+          <div><kbd>Ctrl+Shift+Enter</kbd> Escribir un mensaje</div>
+          <div><kbd>Ctrl+Shift+R</kbd> Calibrar la zona del panel</div>
+        </div>
+        <div class="row-set">
+          <div><b>Salir</b><div class="hint">Cierra la app por completo. ✕ solo la oculta.</div></div>
+          <button class="btn danger" id="g-quit">Salir de la app</button>
+        </div>
+      </section>
     </div>
   </div>
   <div id="grip"></div>

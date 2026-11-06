@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld("wct", {
   testTranslator: (settings) => ipcRenderer.invoke("translator:test", settings),
   calibrate: () => ipcRenderer.send("app:calibrate"),
   close: () => ipcRenderer.send("app:close"),
+  quit: () => ipcRenderer.send("app:quit"),
   minimize: () => ipcRenderer.send("win:minimize"),
   maximize: () => ipcRenderer.send("win:maximize"),
   dock: () => ipcRenderer.send("win:dock"),

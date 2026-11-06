@@ -545,7 +545,15 @@ ipcMain.handle("prefs:get", () => prefs());
 ipcMain.handle("prefs:set", (_e, patch) => {
   saveConfig({ prefs: { ...prefs(), ...patch } });
   if ("alwaysOnTop" in patch) applyAlwaysOnTop();
+  if ("autoStart" in patch) {
+    applyAutoStart();
+    updateTray();
+  }
   return prefs();
+});
+ipcMain.on("app:quit", () => {
+  quitting = true;
+  app.quit();
 });
 
 // Outgoing message: translate (or pass through) and copy to the clipboard.

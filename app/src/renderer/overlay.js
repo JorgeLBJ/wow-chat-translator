@@ -157,32 +157,12 @@ $("dock").onclick = () => window.wct.dock();
 $("min").onclick = () => window.wct.minimize();
 $("max").onclick = () => window.wct.maximize();
 $("close").onclick = () => window.wct.close();
-$("pin").onclick = async () => {
-  prefs = await window.wct.setPrefs({ alwaysOnTop: !prefs.alwaysOnTop });
-  applyPrefs();
-};
+$("pin").onclick = () => savePrefs({ alwaysOnTop: !prefs.alwaysOnTop });
 window.wct.onMaximized((maxed) => {
   document.body.classList.toggle("maxed", maxed);
   $("max").textContent = maxed ? "❐" : "☐";
   $("max").dataset.tip = maxed ? "Restaurar" : "Maximizar";
 });
-
-const menu = $("menu");
-$("gear").onclick = (e) => {
-  e.stopPropagation();
-  menu.classList.toggle("open");
-};
-document.addEventListener("click", (e) => {
-  if (!menu.contains(e.target)) menu.classList.remove("open");
-});
-$("m-calib").onclick = () => { menu.classList.remove("open"); window.wct.calibrate(); };
-$("m-dock").onclick = () => { menu.classList.remove("open"); window.wct.dock(); };
-$("m-clear").onclick = () => {
-  menu.classList.remove("open");
-  for (const item of items.values()) item.node.remove();
-  items.clear();
-  renderEmpty();
-};
 
 // Footer ----------------------------------------------------------------------
 
@@ -195,22 +175,38 @@ window.wct.onOcrState((state) => {
 window.wct.onStatus((text) => { $("status").textContent = text; });
 
 function applyPrefs() {
+  const pct = Math.round(prefs.opacity * 100);
   $("win").style.opacity = prefs.opacity;
-  $("opacity").value = Math.round(prefs.opacity * 100);
+  $("opacity").value = pct;
+  $("w-opacity").value = pct;
+  $("w-opacity-val").textContent = `${pct} %`;
+  $("w-font").value = prefs.fontSize;
+  $("w-font-val").textContent = `${prefs.fontSize} px`;
   $("list").style.setProperty("--fs", `${prefs.fontSize}px`);
   $("pin").classList.toggle("on", prefs.alwaysOnTop);
   $("pin").dataset.tip = prefs.alwaysOnTop ? "Siempre encima: activado" : "Siempre encima: desactivado";
+  $("w-ontop").checked = prefs.alwaysOnTop;
+  $("g-autostart").checked = prefs.autoStart !== false;
 }
 
-$("opacity").oninput = (e) => {
-  prefs.opacity = Number(e.target.value) / 100;
+const savePrefs = async (patch) => {
+  prefs = await window.wct.setPrefs(patch);
   applyPrefs();
 };
-$("opacity").onchange = () => window.wct.setPrefs({ opacity: prefs.opacity });
-const changeFont = async (delta) => {
-  prefs = await window.wct.setPrefs({ fontSize: Math.min(22, Math.max(10, prefs.fontSize + delta)) });
+
+for (const id of ["opacity", "w-opacity"]) {
+  $(id).oninput = (e) => {
+    prefs.opacity = Number(e.target.value) / 100;
+    applyPrefs();
+  };
+  $(id).onchange = () => window.wct.setPrefs({ opacity: prefs.opacity });
+}
+$("w-font").oninput = (e) => {
+  prefs.fontSize = Number(e.target.value);
   applyPrefs();
 };
+$("w-font").onchange = () => window.wct.setPrefs({ fontSize: prefs.fontSize });
+const changeFont = (delta) => savePrefs({ fontSize: Math.min(22, Math.max(10, prefs.fontSize + delta)) });
 $("fs-down").onclick = () => changeFont(-1);
 $("fs-up").onclick = () => changeFont(1);
 
@@ -328,18 +324,41 @@ function syncProvider() {
   showResult("");
 }
 
+function showPane(id) {
+  document.querySelectorAll(".stab").forEach((b) => b.classList.toggle("on", b.dataset.pane === id));
+  document.querySelectorAll(".pane").forEach((p) => { p.hidden = p.id !== id; });
+}
+
 async function openSettings() {
-  menu.classList.remove("open");
   savedTranslator = await window.wct.getTranslator();
   $("t-provider").value = savedTranslator.provider;
   syncProvider();
+  applyPrefs();
   settingsBox.classList.add("open");
 }
 
-$("m-translator").onclick = openSettings;
+const closeSettings = () => settingsBox.classList.remove("open");
+
+$("gear").onclick = () => (settingsBox.classList.contains("open") ? closeSettings() : openSettings());
+$("s-close").onclick = closeSettings;
+document.querySelectorAll(".stab").forEach((b) => { b.onclick = () => showPane(b.dataset.pane); });
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && settingsBox.classList.contains("open")) closeSettings();
+});
+
+$("w-ontop").onchange = (e) => savePrefs({ alwaysOnTop: e.target.checked });
+$("w-calib").onclick = () => { closeSettings(); window.wct.calibrate(); };
+$("w-dock").onclick = () => { closeSettings(); window.wct.dock(); };
+$("g-autostart").onchange = (e) => savePrefs({ autoStart: e.target.checked });
+$("g-clear").onclick = () => {
+  for (const item of items.values()) item.node.remove();
+  items.clear();
+  renderEmpty();
+  closeSettings();
+};
+$("g-quit").onclick = () => window.wct.quit();
 $("t-provider").onchange = syncProvider;
 $("t-key").oninput = () => { keyTouched = true; };
-$("t-cancel").onclick = () => settingsBox.classList.remove("open");
 
 $("t-load").onclick = async () => {
   showResult("Cargando modelos…");
@@ -366,7 +385,8 @@ $("t-save").onclick = async () => {
   if (s.provider !== "google" && !s.model) return showResult("Elige un modelo antes de guardar.", "err");
   const res = await window.wct.setTranslator(s);
   if (!res.ok) return showResult(`Error: ${res.error}`, "err");
-  settingsBox.classList.remove("open");
+  savedTranslator = await window.wct.getTranslator();
+  showResult(`Guardado. Traduciendo con: ${res.label}`, "ok");
 };
 
 window.wct.onTranslatorChanged((label) => { $("provider-label").textContent = label; });
