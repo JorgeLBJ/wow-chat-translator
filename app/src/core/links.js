@@ -6,8 +6,16 @@
 const LINK = /\[\s*([^[\]]+?)\s*\]/g;
 const PLACEHOLDER = /\[\s*(\d+)\s*\]/g;
 
+// Leftover of WoW named link colors ("|cnIQ1:" rendered as "/cnlQ1 ") from addon
+// versions that did not strip them; OCR may read I as l and drop the colon.
+const COLOR_LEFTOVER = /\/cn[A-Za-z0-9]{2,6}:?\s*/g;
+
 export function tidyLinks(text) {
-  return text.replace(LINK, (_m, name) => `[${name}]`);
+  return text
+    .replace(COLOR_LEFTOVER, "")
+    .replace(LINK, (_m, name) => `[${name}]`)
+    .replace(/\s{2,}/g, " ")
+    .trim();
 }
 
 export function protectLinks(text) {

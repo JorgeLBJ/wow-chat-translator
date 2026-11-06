@@ -358,3 +358,9 @@ describe("openai-compatible prompt", () => {
     expect(JSON.parse(fetchFn.mock.calls[0][1].body).messages[0].content).toContain("[0]");
   });
 });
+
+describe("tidyLinks with leftover color codes", () => {
+  it("removes named-color leftovers like /cnlQ1 that an old addon version leaks", () => {
+    expect(tidyLinks("keep them? /cnlQ1 CWAL /cnIQ1: KWYJIBO")).toBe("keep them? CWAL KWYJIBO");
+  });
+});
