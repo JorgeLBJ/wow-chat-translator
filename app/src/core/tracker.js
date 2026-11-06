@@ -32,7 +32,11 @@ export function createTracker({ threshold = 0.6, max = 300 } = {}) {
       for (const msg of messages) {
         const key = normalize(`${msg.player}${msg.text}`);
         const prev = seen.get(msg.seq);
-        if (prev !== undefined && similarity(prev, key) >= threshold) continue;
+        // Same seq, same message when the text is similar, or when one reading starts
+        // with the other (OCR glued a misread next line onto this one, or cut it short).
+        if (prev !== undefined && (similarity(prev, key) >= threshold || prev.startsWith(key) || key.startsWith(prev))) {
+          continue;
+        }
         seen.delete(msg.seq);
         seen.set(msg.seq, key);
         if (seen.size > max) seen.delete(seen.keys().next().value);

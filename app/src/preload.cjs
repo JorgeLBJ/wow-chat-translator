@@ -22,6 +22,7 @@ contextBridge.exposeInMainWorld("wct", {
   clearMessages: () => ipcRenderer.send("chat:clear"),
   onClearMessages: on("chat:clear"),
   onPrefsChanged: on("prefs:changed"),
+  debugUi: (info) => ipcRenderer.send("debug:ui", info),
   minimize: () => ipcRenderer.send("win:minimize"),
   maximize: () => ipcRenderer.send("win:maximize"),
   dock: () => ipcRenderer.send("win:dock"),

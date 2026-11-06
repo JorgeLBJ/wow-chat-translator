@@ -67,6 +67,13 @@ describe("createTracker", () => {
     expect(t.newMessages([m(5, "i think i iust used thottbot Iol")])).toHaveLength(0);
   });
 
+  it("keeps one message when OCR glued the next, misread line onto it", () => {
+    const t = createTracker();
+    t.newMessages([m(414, "LF thunderbluff sum")]);
+    const glued = m(414, "LF thunderbluff sum 4l5 Trade SHAMAN Ranaghar Foerender: I keep trying to play with a bop-it");
+    expect(t.newMessages([glued])).toHaveLength(0);
+  });
+
   it("treats a reused seq with different text as new (addon reloaded)", () => {
     const t = createTracker();
     t.newMessages([m(1, "anybody doing maggot eye quest")]);

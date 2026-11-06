@@ -171,8 +171,25 @@ const providerLabel = () => {
 };
 let nextId = 1;
 
+// Diagnostic log (userData/debug.log): OCR reads and what the overlay received, so a
+// "stuck" report can be checked against evidence. Small: rotated at 2 MB.
+// WCT_DEBUG=1 also logs every capture tick.
+const DEBUG_MAX_BYTES = 2 * 1024 * 1024;
+function debug(...parts) {
+  try {
+    const file = path.join(app.getPath("userData"), "debug.log");
+    if (fs.existsSync(file) && fs.statSync(file).size > DEBUG_MAX_BYTES) fs.renameSync(file, `${file}.old`);
+    const line = `${new Date().toISOString()} ${parts.map((p) => (typeof p === "string" ? p : JSON.stringify(p))).join(" ")}\n`;
+    fs.appendFileSync(file, line);
+  } catch {
+    // logging must never break the app
+  }
+}
+
 function handleOcrLines(lines) {
-  const fresh = tracker.newMessages(parseLines(lines));
+  const parsed = parseLines(lines);
+  const fresh = tracker.newMessages(parsed);
+  debug("ocr", { lines: lines.length, parsed: parsed.map((m) => m.seq), fresh: fresh.map((m) => m.seq) });
   for (const msg of fresh) {
     msg.text = tidyLinks(msg.text);
     // Links ([Item], [Spell]...) are never translated: mask them, restore after.
@@ -246,9 +263,11 @@ function startWorker() {
       return;
     }
     if (data.error) {
+      debug("worker error", data.error);
       send("ocr:state", "error");
       return status(`OCR: ${data.error}`);
     }
+    if (!("lines" in data) && process.env.WCT_DEBUG === "1") debug("tick", { panel: data.panel });
     if (typeof data.panel === "boolean") presence.update(data.panel);
     if (!("lines" in data)) return;
     const lines = Array.isArray(data.lines) ? data.lines : data.lines ? [data.lines] : [];
@@ -667,6 +686,7 @@ function openSettings() {
 ipcMain.on("settings:open", () => openSettings());
 ipcMain.on("settings:close", () => settingsWin?.close());
 ipcMain.on("chat:clear", () => send("chat:clear"));
+ipcMain.on("debug:ui", (_e, info) => debug("ui", info));
 ipcMain.on("app:quit", () => {
   quitting = true;
   app.quit();

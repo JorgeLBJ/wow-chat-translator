@@ -130,6 +130,16 @@ window.wct.onAdd((data) => {
   }
   renderEmpty();
   if (stick) $("list").scrollTop = $("list").scrollHeight;
+  const l = $("list");
+  window.wct.debugUi?.({
+    id: item.id,
+    activeTab,
+    tab: item.tab,
+    shown: !item.node.hidden,
+    visibility: document.visibilityState,
+    stuckToBottom: stick,
+    scroll: [Math.round(l.scrollTop), l.scrollHeight, l.clientHeight],
+  });
 });
 
 window.wct.onUpdate((data) => {
