@@ -64,7 +64,7 @@ La app detecta sola tus instalaciones de WoW y te deja elegir en cuáles instala
 
 ## 🚀 Instalación en 3 pasos
 
-1. **Descarga** `WoW-Chat-Translator-Setup-0.2.0.exe` desde [Releases](../../releases/latest).
+1. **Descarga** `WoW-Chat-Translator-Setup-0.2.1.exe` desde [Releases](../../releases/latest).
 2. **Instala.** No pide administrador: se instala solo para tu usuario. Al terminar deja
    marcado **"Abrir WoW Chat Translator"**.
 3. **Acepta instalar el addon** en las versiones de WoW que quieras y entra al juego
@@ -149,7 +149,7 @@ Necesitas Rust (toolchain MSVC) e [Inno Setup 6](https://jrsoftware.org/isdl.php
 cd native
 cargo test
 cd ..
-powershell -ExecutionPolicy Bypass -File installer\build.ps1   # dist\WoW-Chat-Translator-Setup-0.2.0.exe
+powershell -ExecutionPolicy Bypass -File installer\build.ps1   # dist\WoW-Chat-Translator-Setup-0.2.1.exe
 ```
 
 `installer\build.ps1` compila en release y ejecuta `ISCC`. Usa `-SkipCargo` para empaquetar un exe ya compilado.
@@ -172,7 +172,7 @@ powershell -ExecutionPolicy Bypass -File installer\build.ps1   # dist\WoW-Chat-T
 **WoW Chat Translator** translates World of Warcraft chat live in a separate window and helps
 you reply in English while typing in Spanish. It is a native Windows app plus a small addon.
 
-- **Install:** run `WoW-Chat-Translator-Setup-0.2.0.exe` (per-user, no admin). If SmartScreen
+- **Install:** run `WoW-Chat-Translator-Setup-0.2.1.exe` (per-user, no admin). If SmartScreen
   warns, click *More info → Run anyway* (the installer is unsigned). The app installs and
   updates the addon for you.
 - **How it works:** the addon draws a thin pixel strip; the app reads those pixels from the game

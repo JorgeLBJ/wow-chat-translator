@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use eframe::egui::{
     self, vec2, Align, Color32, CornerRadius, CursorIcon, FontId, Frame, Id, Key, Layout, Margin, Response,
-    RichText, ScrollArea, Sense, Stroke, Ui, ViewportBuilder, ViewportClass, ViewportCommand, ViewportId,
+    Order, RichText, ScrollArea, Sense, Stroke, Ui, ViewportBuilder, ViewportClass, ViewportCommand, ViewportId,
 };
 
 use crate::secret::{encrypt_api_key, read_api_key};
@@ -18,7 +18,7 @@ use crate::core::prefs::TranslatorSettings;
 
 use super::{addon_panel, autostart};
 use super::settings_form::{
-    form_for_provider, is_llm, key_hint, key_placeholder, load_models, models_message, probe, provider_option_label,
+    filter_models, form_for_provider, is_llm, key_hint, key_placeholder, load_models, models_message, probe, provider_option_label,
     request_key, save_translator, saved_translator, shows_key, shows_url, validate_form, KeyInput, SavedTranslator,
     TranslatorForm, FALLBACK_HINT, MODEL_PLACEHOLDER, PROVIDER_OPTIONS,
 };
@@ -63,6 +63,8 @@ pub struct SettingsState {
     form: TranslatorForm,
     key_text: String,
     models: Vec<String>,
+    /// The model list under the Modelo field is showing.
+    models_open: bool,
     result: Option<(String, Kind)>,
     busy: bool,
     /// Bumped when the form is reset, so a late job result is dropped.
@@ -81,6 +83,7 @@ impl SettingsState {
             form,
             key_text: String::new(),
             models: Vec::new(),
+            models_open: false,
             result: None,
             busy: false,
             generation: 0,
@@ -90,6 +93,7 @@ impl SettingsState {
 
     fn switch_provider(&mut self, provider: &str) {
         self.form = form_for_provider(provider, &self.saved);
+        self.models_open = false;
         self.key_text.clear();
         self.models.clear();
         self.result = None;
@@ -105,11 +109,22 @@ fn lock(state: &Mutex<SettingsState>) -> MutexGuard<'_, SettingsState> {
 /// Developer screenshots only: opens the window on `pane` (translate|window|general).
 pub fn dev_open(ctx: &egui::Context, shared: &Shared, state: &Arc<Mutex<SettingsState>>, pane: &str) {
     open(ctx, shared, state);
-    lock(state).pane = match pane {
+    let mut st = lock(state);
+    st.pane = match pane {
         "window" => Pane::Window,
         "general" => Pane::General,
         _ => Pane::Translate,
     };
+    if pane == "models" {
+        // OpenRouter with a loaded, filtered model list.
+        st.switch_provider("openrouter");
+        st.models = ["deepseek/deepseek-chat", "deepseek/deepseek-r1", "deepseek/deepseek-v3.2", "openai/gpt-5-mini", "google/gemini-2.5-flash"]
+            .map(String::from)
+            .to_vec();
+        st.form.model = "deepseek".into();
+        st.models_open = true;
+        st.result = Some((models_message(st.models.len()), Kind::Ok));
+    }
 }
 
 /// ⚙: opens the window, or brings the open one to the front.
@@ -147,7 +162,9 @@ pub fn show(ctx: &egui::Context, shared: Arc<Shared>, state: Arc<Mutex<SettingsS
         if class == ViewportClass::Embedded {
             return;
         }
-        if ctx.input(|i| i.viewport().close_requested() || i.key_pressed(Key::Escape)) {
+        // Esc closes the model list first, then the window.
+        let list_open = lock(&state).models_open;
+        if ctx.input(|i| i.viewport().close_requested() || (i.key_pressed(Key::Escape) && !list_open)) {
             close(ctx, &shared);
             return;
         }
@@ -253,26 +270,20 @@ fn translate_pane(ui: &mut Ui, shared: &Arc<Shared>, state: &Arc<Mutex<SettingsS
         hint(ui, key_hint(&p));
         field_label(ui, "Modelo");
         let mut load = false;
-        ui.horizontal(|ui| {
-            let button_w = widgets::text_width(ui, "Cargar modelos", &FontId::proportional(12.0)) + 28.0;
-            let list_w = if st.models.is_empty() { 0.0 } else { 30.0 };
-            let edit_w = (ui.available_width() - button_w - list_w).max(80.0);
-            ui.add(input(&mut st.form.model).hint_text(dim(MODEL_PLACEHOLDER)).desired_width(edit_w));
-            if !st.models.is_empty() {
-                let mut chosen = None;
-                egui::ComboBox::from_id_salt("t-models").width(18.0).selected_text("").show_ui(ui, |ui| {
-                    for m in &st.models {
-                        if ui.selectable_label(st.form.model == *m, m).clicked() {
-                            chosen = Some(m.clone());
-                        }
-                    }
-                });
-                if let Some(m) = chosen {
-                    st.form.model = m;
-                }
-            }
-            load = widgets::button(ui, "Cargar modelos", ButtonKind::Normal, !st.busy).clicked();
-        });
+        let has_models = !st.models.is_empty();
+        // Right to left so the buttons always fit and the field takes what is left.
+        let (arrow, edit) = ui
+            .with_layout(Layout::right_to_left(Align::Min), |ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                load = widgets::button(ui, "Cargar modelos", ButtonKind::Normal, !st.busy).clicked();
+                let arrow = has_models.then(|| widgets::button(ui, if st.models_open { "▴" } else { "▾" }, ButtonKind::Normal, true));
+                let edit = ui.add(input(&mut st.form.model).hint_text(dim(MODEL_PLACEHOLDER)).desired_width(ui.available_width()));
+                (arrow, edit)
+            })
+            .inner;
+        if has_models {
+            model_list(ui, &mut st, &edit, arrow.as_ref());
+        }
         hint(ui, FALLBACK_HINT);
         if load {
             st.result = Some(("Cargando modelos…".into(), Kind::Neutral));
@@ -301,6 +312,63 @@ fn translate_pane(ui: &mut Ui, shared: &Arc<Shared>, state: &Arc<Mutex<SettingsS
             spawn_job(ui.ctx(), shared, state, &mut st, Job::Probe);
         }
     });
+}
+
+/// The searchable model list: typing in the field filters it, ▾ opens or closes it,
+/// picking a model or clicking elsewhere (Enter, Esc) closes it.
+fn model_list(ui: &mut Ui, st: &mut SettingsState, edit: &Response, arrow: Option<&Response>) {
+    if edit.changed() {
+        st.models_open = true;
+    }
+    if let Some(a) = arrow {
+        if a.clicked() {
+            st.models_open = !st.models_open;
+            if st.models_open {
+                edit.request_focus();
+            }
+        }
+    }
+    if !st.models_open {
+        return;
+    }
+    let right = arrow.map_or(edit.rect.right(), |a| a.rect.right());
+    let width = right - edit.rect.left();
+    let shown: Vec<String> = filter_models(&st.models, &st.form.model).into_iter().map(String::from).collect();
+    let mut chosen = None;
+    let area = egui::Area::new(Id::new("t-models-list"))
+        .order(Order::Foreground)
+        .fixed_pos(edit.rect.left_bottom() + vec2(0.0, 2.0))
+        .show(ui.ctx(), |ui| {
+            Frame::menu(ui.style()).show(ui, |ui| {
+                let margin = ui.style().spacing.menu_margin.sum().x;
+                ui.set_width((width - margin).max(120.0));
+                if shown.is_empty() {
+                    ui.label(RichText::new("Ningún modelo coincide").size(11.5).color(style::MUTED));
+                    return;
+                }
+                ScrollArea::vertical().max_height(240.0).auto_shrink([false, true]).show(ui, |ui| {
+                    for m in &shown {
+                        if ui.selectable_label(st.form.model == *m, m).clicked() {
+                            chosen = Some(m.clone());
+                        }
+                    }
+                });
+            });
+        });
+    if let Some(m) = chosen {
+        st.form.model = m;
+        st.models_open = false;
+        return;
+    }
+    let (pressed_at, enter, esc) = ui.ctx().input(|i| {
+        (i.pointer.any_pressed().then(|| i.pointer.interact_pos()).flatten(), i.key_pressed(Key::Enter), i.key_pressed(Key::Escape))
+    });
+    let outside = pressed_at.is_some_and(|p| {
+        !area.response.rect.contains(p) && !edit.rect.contains(p) && !arrow.is_some_and(|a| a.rect.contains(p))
+    });
+    if outside || enter || esc {
+        st.models_open = false;
+    }
 }
 
 #[derive(Clone, Copy)]

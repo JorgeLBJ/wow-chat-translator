@@ -7,7 +7,7 @@
 ;   RunValueName  HKCU Run value name of "Iniciar con Windows" (overridden only in tests)
 
 #define AppName "WoW Chat Translator"
-#define AppVersion "0.2.0"
+#define AppVersion "0.2.1"
 #define AppPublisher "Jorge Luis Bustamante Jara"
 #define AppExeName "wow-chat-translator.exe"
 #ifndef SourceExe

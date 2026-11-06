@@ -224,6 +224,25 @@ pub fn load_models(form: &TranslatorForm, key: Option<String>, make_llm: MakeLlm
     make_llm(&form.settings(), key)?.list_models()
 }
 
+/// The models shown under the Modelo field: those containing every word of `query`
+/// (case-insensitive). An empty query, or one that already names a listed model, shows
+/// them all so the user can switch.
+pub fn filter_models<'a>(models: &'a [String], query: &str) -> Vec<&'a str> {
+    let query = query.trim();
+    if query.is_empty() || models.iter().any(|m| m == query) {
+        return models.iter().map(String::as_str).collect();
+    }
+    let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
+    models
+        .iter()
+        .filter(|m| {
+            let m = m.to_lowercase();
+            words.iter().all(|w| m.contains(w.as_str()))
+        })
+        .map(String::as_str)
+        .collect()
+}
+
 pub fn models_message(count: usize) -> String {
     format!("{count} modelos disponibles. Elige uno en la lista ▾ junto al campo Modelo.")
 }

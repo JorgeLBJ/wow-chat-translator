@@ -372,7 +372,7 @@ mod e5 {
 
     use wow_chat_translator::app::compose::{copied_message, failed_message, translate_outgoing};
     use wow_chat_translator::app::settings_form::{
-        form_for_provider, key_placeholder, load_models, models_message, probe, request_key, save_translator,
+        filter_models, form_for_provider, key_placeholder, load_models, models_message, probe, request_key, save_translator,
         saved_translator, validate_form, KeyInput, TranslatorForm, TEST_SAMPLE,
     };
     use wow_chat_translator::core::pipeline::{Translation, Translator};
@@ -627,6 +627,20 @@ mod e5 {
         let models = load_models(&form("lmstudio", "", "", KeyInput::Untouched), None, make).unwrap();
         assert_eq!(models, vec!["only".to_string()]);
         assert_eq!(models_message(3), "3 modelos disponibles. Elige uno en la lista ▾ junto al campo Modelo.");
+    }
+
+    #[test]
+    fn filter_models_matches_every_word_ignoring_case_and_shows_all_for_a_chosen_model() {
+        let models: Vec<String> =
+            ["deepseek/deepseek-chat", "deepseek/deepseek-r1", "openai/gpt-5-mini", "DeepSeek/V3 Chat"].map(String::from).to_vec();
+        let all: Vec<&str> = models.iter().map(String::as_str).collect();
+        assert_eq!(filter_models(&models, ""), all);
+        assert_eq!(filter_models(&models, "  "), all);
+        assert_eq!(filter_models(&models, "DEEPSEEK"), vec!["deepseek/deepseek-chat", "deepseek/deepseek-r1", "DeepSeek/V3 Chat"]);
+        assert_eq!(filter_models(&models, "deep chat"), vec!["deepseek/deepseek-chat", "DeepSeek/V3 Chat"]);
+        assert_eq!(filter_models(&models, "claude"), Vec::<&str>::new());
+        // The field already holds a model from the list: show them all to switch.
+        assert_eq!(filter_models(&models, "openai/gpt-5-mini"), all);
     }
 
     // Compose ------------------------------------------------------------------------------
