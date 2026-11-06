@@ -259,7 +259,8 @@ impl Shared {
             if !self.user_hidden.load(Ordering::SeqCst) {
                 self.reveal(false);
             }
-        } else {
+        } else if !super::win::dev_capture() {
+            // Screenshot runs keep the window up even without WoW's strip.
             self.hwnd().hide();
         }
     }

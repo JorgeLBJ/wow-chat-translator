@@ -5,12 +5,12 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use eframe::egui::{
-    self, pos2, vec2, Align, Align2, Color32, CornerRadius, CursorIcon, FontId, Frame, Id, LayerId, Layout, Margin,
-    Key, Order, Rect, Response, RichText, Sense, Shape, Stroke, StrokeKind, TextStyle, Ui, ViewportCommand,
+    self, pos2, text::LayoutJob, vec2, Align, Align2, Color32, CursorIcon, FontId, Frame, Id, Key, LayerId, Layout,
+    Margin, Order, Rect, Response, RichText, Sense, Shape, Stroke, StrokeKind, TextFormat, TextStyle, Ui, ViewportCommand,
 };
 use egui_twemoji::EmojiLabel;
 
-use crate::core::pipeline::Status;
+use crate::core::pipeline::{OverlayItem, Status, UiEvent};
 use crate::core::prefs::Bounds;
 
 use super::compose::{self, copied_message, failed_message, translate_outgoing, OUT_LANGS};
@@ -18,7 +18,7 @@ use super::messages::{badge, can_translate, shows_translation, BadgeKind, Mode, 
 use super::settings::{self, SettingsState};
 use super::shared::Shared;
 use super::style::{self, channel_label, class_color, tab_color};
-use super::win;
+use super::{widgets, win};
 
 const BOUNDS_SAVE_DELAY: Duration = Duration::from_millis(600);
 const PAUSED_NOTE: &str = "⏸ En pausa · clic en un mensaje para traducir";
@@ -47,6 +47,8 @@ pub struct OverlayApp {
     settings: Arc<Mutex<SettingsState>>,
     icon: Option<Arc<egui::IconData>>,
     compose: Compose,
+    /// `WCT_DEV_STATE=hover`: draws the first translated row as hovered (screenshots).
+    dev_hover: bool,
 }
 
 /// The compose box: text, EN/ES, the last result line and the running translation.
@@ -80,6 +82,52 @@ impl OverlayApp {
             opacity,
             last_bounds: None,
             bounds_dirty_since: None,
+            dev_hover: false,
+        }
+    }
+
+    /// Developer screenshots only (`WCT_DEV_CAPTURE=1`): `WCT_DEV_STATE` is a comma list of
+    /// `hover`, `compose` (typed text + the "Copiado" line) and `settings=translate|window|general`.
+    fn apply_dev_state(&mut self, ctx: &egui::Context) {
+        if !win::dev_capture() {
+            return;
+        }
+        let spec = std::env::var("WCT_DEV_STATE").unwrap_or_default();
+        for part in spec.split(',').map(str::trim) {
+            match part.split_once('=') {
+                Some(("settings", pane)) => settings::dev_open(ctx, &self.shared, &self.settings, pane),
+                _ if part == "hover" => self.dev_hover = true,
+                _ if part == "sample" => {
+                    let mut model = self.shared.model();
+                    let samples = [
+                        ("General", Some("general"), "PALADIN", "Rj", "metro lineal, wer kommt mit?", "metro lineal, ¿quién viene?", "de"),
+                        ("Trade", Some("trade"), "MAGE", "Slickback", "TANK LFM and HEALER SFK!", "¡TANQUE LFM y SANADOR SFK!", "en"),
+                    ];
+                    for (i, (channel, tab, class, player, original, translated, lang)) in samples.into_iter().enumerate() {
+                        let item = OverlayItem {
+                            id: 900_000 + i as u64,
+                            time: 0,
+                            channel: channel.into(),
+                            tab,
+                            class: Some(class.into()),
+                            player: player.into(),
+                            original: original.into(),
+                            translated: Some(translated.into()),
+                            lang: Some(lang.into()),
+                            status: Status::Done,
+                            provider: Some("google".into()),
+                            fallback_reason: None,
+                            error: None,
+                        };
+                        model.list.apply(UiEvent::Add(item), &|_| "15:38".into());
+                    }
+                }
+                _ if part == "compose" => {
+                    self.compose.text = "hola, ¿qué tal? → listo".into();
+                    self.compose.preview = Some((copied_message("hello, how are you?"), COPIED));
+                }
+                _ => {}
+            }
         }
     }
 
@@ -113,81 +161,86 @@ impl OverlayApp {
 
     // Title bar ------------------------------------------------------------------------
 
-    fn title_bar(&mut self, ui: &mut Ui, maximized: bool) {
+    /// Draws the bar's contents; true while the pointer is over one of its controls
+    /// (everywhere else the bar moves the window, see `widgets::caption_drag`).
+    fn title_bar(&mut self, ui: &mut Ui, maximized: bool) -> bool {
         let ctx = ui.ctx().clone();
-        // Empty parts of the bar move the window; widgets added later sit on top.
-        let bar = ui.interact(ui.max_rect(), Id::new("titlebar-drag"), Sense::click_and_drag());
-        if bar.drag_started_by(egui::PointerButton::Primary) {
-            ctx.send_viewport_cmd(ViewportCommand::StartDrag);
-        }
-        if bar.double_clicked() {
-            ctx.send_viewport_cmd(ViewportCommand::Maximized(!maximized));
-        }
-
         let reader = self.shared.status().reader;
         let paused = self.shared.config().prefs.translation_paused;
         let on_top = self.shared.config().prefs.always_on_top;
+        let narrow = ui.available_width() < 400.0;
+        let mut hot = false;
 
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 6.0;
-            ui.label(RichText::new("WoW Chat Translator").size(12.5).color(style::TEXT));
-            ui.label(RichText::new(reader.title()).size(11.0).color(style::MUTED));
-
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                ui.spacing_mut().item_spacing.x = 4.0;
-                if icon_button(ui, "🗙", style::ICON, None, style::CLOSE_HOVER, "Ocultar (sigue en la bandeja)").clicked() {
-                    self.shared.hide_by_user();
-                }
-                let (max_icon, max_tip) = if maximized { ("🗗", "Restaurar") } else { ("🗖", "Maximizar") };
-                if icon_button(ui, max_icon, style::ICON, None, white(0.1), max_tip).clicked() {
-                    ctx.send_viewport_cmd(ViewportCommand::Maximized(!maximized));
-                }
-                if icon_button(ui, "🗕", style::ICON, None, white(0.1), "Minimizar").clicked() {
-                    ctx.send_viewport_cmd(ViewportCommand::Minimized(true));
-                }
-                separator(ui);
-                if icon_button(ui, "⚙", style::ICON, None, white(0.1), "Ajustes").clicked() {
-                    settings::open(&ctx, &self.shared, &self.settings);
-                }
-                if pin_button(ui, on_top).clicked() {
-                    let next = !on_top;
-                    self.shared.config().prefs.always_on_top = next;
-                    self.shared.save_config();
-                    ctx.send_viewport_cmd(ViewportCommand::WindowLevel(if next {
-                        egui::WindowLevel::AlwaysOnTop
-                    } else {
-                        egui::WindowLevel::Normal
-                    }));
-                }
-                let (pause_icon, pause_tip, fg, bg) = if paused {
-                    ("▶", "Reanudar traducción", style::AMBER, Some(style::AMBER_BG))
+        ui.allocate_ui_with_layout(vec2(ui.available_width(), 24.0), Layout::right_to_left(Align::Center), |ui| {
+            ui.spacing_mut().item_spacing.x = 2.0;
+            let r = icon_button(ui, "✕", style::ICON, None, style::CLOSE_HOVER, "Ocultar (sigue en la bandeja)");
+            hot |= r.contains_pointer();
+            if r.clicked() {
+                self.shared.hide_by_user();
+            }
+            let (max_icon, max_tip) = if maximized { ("❐", "Restaurar") } else { ("☐", "Maximizar") };
+            let r = icon_button(ui, max_icon, style::ICON, None, white(0.1), max_tip);
+            hot |= r.contains_pointer();
+            if r.clicked() {
+                ctx.send_viewport_cmd(ViewportCommand::Maximized(!maximized));
+            }
+            let r = icon_button(ui, "—", style::ICON, None, white(0.1), "Minimizar");
+            hot |= r.contains_pointer();
+            if r.clicked() {
+                ctx.send_viewport_cmd(ViewportCommand::Minimized(true));
+            }
+            separator(ui);
+            let r = icon_button(ui, "⚙", style::ICON, None, white(0.1), "Ajustes");
+            hot |= r.contains_pointer();
+            if r.clicked() {
+                settings::open(&ctx, &self.shared, &self.settings);
+            }
+            let r = pin_button(ui, on_top);
+            hot |= r.contains_pointer();
+            if r.clicked() {
+                let next = !on_top;
+                self.shared.config().prefs.always_on_top = next;
+                self.shared.save_config();
+                ctx.send_viewport_cmd(ViewportCommand::WindowLevel(if next {
+                    egui::WindowLevel::AlwaysOnTop
                 } else {
-                    ("⏸", "Pausar traducción", style::ICON, None)
-                };
-                if icon_button(ui, pause_icon, fg, bg, white(0.1), pause_tip).clicked() {
-                    self.shared.set_paused(!paused);
-                }
-                separator(ui);
-                self.mode_toggle(ui);
+                    egui::WindowLevel::Normal
+                }));
+            }
+            let (pause_icon, pause_tip, fg, bg) = if paused {
+                ("▶", "Reanudar traducción", style::AMBER, Some(style::AMBER_BG))
+            } else {
+                ("⏸", "Pausar traducción", style::ICON, None)
+            };
+            let r = icon_button(ui, pause_icon, fg, bg, white(0.1), pause_tip);
+            hot |= r.contains_pointer();
+            if r.clicked() {
+                self.shared.set_paused(!paused);
+            }
+            separator(ui);
+            hot |= self.mode_toggle(ui, narrow);
+            ui.add_space(4.0);
+            ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                // `.t` + `<small>`: one line that ellipsizes as a whole when space runs out.
+                let mut job = LayoutJob::default();
+                job.append("WoW Chat Translator", 0.0, TextFormat::simple(widgets::semibold(12.5), style::TEXT));
+                job.append(reader.title(), 6.0, TextFormat::simple(FontId::proportional(11.0), style::MUTED));
+                ui.add(egui::Label::new(job).truncate().sense(Sense::hover()));
             });
         });
+        hot
     }
 
-    fn mode_toggle(&mut self, ui: &mut Ui) {
-        Frame::new().fill(white(0.07)).corner_radius(CornerRadius::same(6)).inner_margin(Margin::same(2)).show(ui, |ui| {
-            ui.spacing_mut().item_spacing.x = 0.0;
-            // Right-to-left parent: add "Original" first so "Traducido" ends up on the left.
-            ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                for (label, mode) in [("Traducido", Mode::Translated), ("Original", Mode::Original)] {
-                    let on = self.mode == mode;
-                    let (fg, bg) = if on { (Color32::WHITE, style::ACCENT) } else { (style::SEG_TEXT, Color32::TRANSPARENT) };
-                    if chip(ui, label, 11.0, fg, bg, vec2(9.0, 2.0), 5, 18.0, Sense::click()).clicked() && !on {
-                        self.mode = mode;
-                        self.scroll_to_bottom = true;
-                    }
-                }
-            });
-        });
+    /// `.seg` Traducido / Original; true while the pointer is over it.
+    fn mode_toggle(&mut self, ui: &mut Ui, narrow: bool) -> bool {
+        let items = [("Traducido", Mode::Translated), ("Original", Mode::Original)];
+        let pad = if narrow { 6.0 } else { 9.0 };
+        let (picked, over) = widgets::segmented(ui, Id::new("mode-seg"), &items, self.mode, pad, 20.0);
+        if let Some(mode) = picked {
+            self.mode = mode;
+            self.scroll_to_bottom = true;
+        }
+        over
     }
 
     // Tabs -------------------------------------------------------------------------------
@@ -227,9 +280,12 @@ impl OverlayApp {
                 ui.style_mut().text_styles.insert(TextStyle::Body, FontId::proportional(font_size));
                 ui.spacing_mut().item_spacing.y = 0.0;
                 let mut any = false;
+                let mut force_hover = self.dev_hover;
                 for row in model.list.visible() {
                     any = true;
-                    if message_row(ui, row, self.mode, font_size).clicked() {
+                    let forced = force_hover && shows_translation(&row.item, self.mode);
+                    force_hover &= !forced;
+                    if message_row(ui, row, self.mode, font_size, forced).clicked() {
                         clicked = Some(row.item.id);
                     }
                 }
@@ -302,16 +358,26 @@ impl OverlayApp {
     // Compose ----------------------------------------------------------------------------
 
     fn compose(&mut self, ui: &mut Ui) {
-        ui.horizontal(|ui| {
+        const ROW_H: f32 = 30.0;
+        ui.allocate_ui_with_layout(vec2(ui.available_width(), ROW_H), Layout::right_to_left(Align::Center), |ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
-            let toggle_w = 64.0;
+            widgets::field_style(ui);
+            // The toggle is laid out first, so the input only takes the width left over.
+            let items = OUT_LANGS.map(|(code, label)| (label, code));
+            let (picked, _) = widgets::segmented(ui, Id::new("lang-seg"), &items, self.compose.lang, 9.0, ROW_H - 4.0);
+            if let Some(code) = picked {
+                self.compose.lang = code;
+                ui.memory_mut(|m| m.request_focus(Id::new(COMPOSE_ID)));
+            }
             let edit = egui::TextEdit::singleline(&mut self.compose.text)
                 .id(Id::new(COMPOSE_ID))
-                .hint_text(compose::PLACEHOLDER)
-                .desired_width((ui.available_width() - toggle_w).max(60.0))
-                .margin(Margin::symmetric(8, 4))
+                .hint_text(RichText::new(compose::PLACEHOLDER).color(style::DIM))
+                .text_color(widgets::INPUT_TEXT)
+                .font(FontId::proportional(13.0))
+                .vertical_align(Align::Center)
+                .margin(Margin::symmetric(9, 4))
                 .background_color(white(0.06));
-            let resp = ui.add(edit);
+            let resp = ui.add_sized(vec2(ui.available_width().max(40.0), ROW_H), edit);
             if resp.lost_focus() {
                 let (enter, esc) = ui.input(|i| (i.key_pressed(Key::Enter), i.key_pressed(Key::Escape)));
                 if esc {
@@ -320,19 +386,9 @@ impl OverlayApp {
                     self.send_compose(ui.ctx());
                 }
             }
-            Frame::new().fill(white(0.07)).corner_radius(CornerRadius::same(6)).inner_margin(Margin::same(2)).show(ui, |ui| {
-                ui.spacing_mut().item_spacing.x = 0.0;
-                for (code, label) in OUT_LANGS {
-                    let on = self.compose.lang == code;
-                    let (fg, bg) = if on { (Color32::WHITE, style::ACCENT) } else { (style::SEG_TEXT, Color32::TRANSPARENT) };
-                    if chip(ui, label, 11.0, fg, bg, vec2(8.0, 2.0), 5, 20.0, Sense::click()).clicked() {
-                        self.compose.lang = code;
-                        ui.memory_mut(|m| m.request_focus(Id::new(COMPOSE_ID)));
-                    }
-                }
-            });
         });
         if let Some((text, color)) = &self.compose.preview {
+            ui.add_space(5.0);
             ui.add(egui::Label::new(RichText::new(text).size(11.5).color(*color)).wrap());
         }
     }
@@ -406,9 +462,12 @@ impl eframe::App for OverlayApp {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        if std::mem::take(&mut self.first_frame) && self.started_hidden {
-            // eframe shows the window after its first frame; --hidden keeps it in the tray.
-            self.shared.hwnd().hide();
+        if std::mem::take(&mut self.first_frame) {
+            if self.started_hidden {
+                // eframe shows the window after its first frame; --hidden keeps it in the tray.
+                self.shared.hwnd().hide();
+            }
+            self.apply_dev_state(ctx);
         }
         if ctx.input(|i| i.viewport().close_requested()) {
             // ✕ and Alt+F4 only hide; quitting is done from the tray menu.
@@ -426,10 +485,11 @@ impl eframe::App for OverlayApp {
         let maximized = ctx.input(|i| i.viewport().maximized).unwrap_or(false);
         let font_size = self.shared.config().prefs.font_size.clamp(9.0, 28.0);
 
-        egui::TopBottomPanel::top("titlebar")
+        let bar = egui::TopBottomPanel::top("titlebar")
             .show_separator_line(false)
             .frame(Frame::new().fill(white(0.03)).inner_margin(Margin { left: 12, right: 6, top: 6, bottom: 6 }))
             .show(ctx, |ui| self.title_bar(ui, maximized));
+        widgets::caption_drag(ctx, Id::new("overlay-caption"), bar.response.rect, bar.inner, Some(maximized));
         egui::TopBottomPanel::top("tabs")
             .show_separator_line(false)
             .frame(Frame::new().fill(style::BG).inner_margin(Margin { left: 10, right: 10, top: 6, bottom: 0 }))
@@ -484,83 +544,76 @@ fn icon_button(ui: &mut Ui, icon: &str, fg: Color32, bg: Option<Color32>, hover_
         ui.painter().rect_filled(rect, 5.0, fill);
     }
     let color = if hovered && bg.is_none() { Color32::WHITE } else { fg };
-    ui.painter().text(rect.center(), Align2::CENTER_CENTER, icon, FontId::proportional(13.0), color);
+    widgets::text_in(ui.painter(), rect, icon, FontId::proportional(13.0), color);
     resp.on_hover_text(tip)
 }
 
-/// 📌: blue and tinted when on; grey, faded and struck through when off.
+/// 📌 (`#pin`): one glyph, same size and place in both states. On: light blue on a
+/// blue tint. Off: the same glyph in grey, dimmed (brighter on hover).
 fn pin_button(ui: &mut Ui, on: bool) -> Response {
     let (rect, resp) = ui.allocate_exact_size(vec2(28.0, 24.0), Sense::click());
+    let hovered = resp.hovered();
     let p = ui.painter();
-    if on {
+    let color = if on {
         p.rect_filled(rect, 5.0, with_alpha(style::ACCENT, 56));
-        p.text(rect.center(), Align2::CENTER_CENTER, "📌", FontId::proportional(13.0), style::ACCENT_LIGHT);
+        style::ACCENT_LIGHT
     } else {
-        if resp.hovered() {
+        if hovered {
             p.rect_filled(rect, 5.0, white(0.1));
         }
-        let alpha = if resp.hovered() { 205 } else { 115 };
-        p.text(rect.center(), Align2::CENTER_CENTER, "📌", FontId::proportional(13.0), Color32::from_gray(160).gamma_multiply(alpha as f32 / 255.0));
-        let c = rect.center();
-        p.line_segment([pos2(c.x - 8.0, c.y + 6.0), pos2(c.x + 8.0, c.y - 6.0)], Stroke::new(2.0_f32, Color32::from_rgb(0xcb, 0xd5, 0xe1)));
-    }
+        style::ICON.gamma_multiply(if hovered { 0.8 } else { 0.45 })
+    };
+    widgets::text_in(p, rect, "📌", FontId::proportional(13.0), color);
     let tip = if on { "Siempre encima: activado" } else { "Siempre encima: desactivado" };
     resp.on_hover_text(tip)
 }
 
 /// Text in a rounded box; `height` is the allocated row height (the box is centered).
 #[allow(clippy::too_many_arguments)]
-fn chip(ui: &mut Ui, text: &str, size: f32, fg: Color32, bg: Color32, pad: egui::Vec2, radius: u8, height: f32, sense: Sense) -> Response {
-    let galley = ui.painter().layout_no_wrap(text.to_owned(), FontId::proportional(size), fg);
-    let box_size = galley.size() + pad * 2.0;
+fn chip(ui: &mut Ui, text: &str, font: FontId, fg: Color32, bg: Color32, pad: egui::Vec2, radius: u8, height: f32, sense: Sense) -> Response {
+    let box_size = vec2(widgets::text_width(ui, text, &font), font.size * 1.33) + pad * 2.0;
     let (rect, resp) = ui.allocate_exact_size(vec2(box_size.x, height.max(box_size.y)), sense);
     let chip_rect = Rect::from_center_size(rect.center(), box_size);
     if bg != Color32::TRANSPARENT {
         ui.painter().rect_filled(chip_rect, radius as f32, bg);
     }
-    ui.painter().galley(chip_rect.center() - galley.size() / 2.0, galley, fg);
+    widgets::text_in(ui.painter(), chip_rect, text, font, fg);
     resp
 }
 
 fn tab_button(ui: &mut Ui, label: &str, on: bool, count: Option<u32>) -> Response {
     let font = FontId::proportional(11.5);
-    let label_galley = ui.painter().layout_no_wrap(label.to_owned(), font, Color32::WHITE);
-    let count_galley = count.map(|n| ui.painter().layout_no_wrap(n.to_string(), FontId::proportional(9.5), Color32::WHITE));
-    let count_w = count_galley.as_ref().map_or(0.0, |g| g.size().x + 10.0 + 4.0);
-    let size = vec2(label_galley.size().x + count_w + 20.0, label_galley.size().y + 10.0);
-    let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
-    let p = ui.painter();
+    let badge_font = FontId::proportional(9.5);
+    let count_text = count.map(|n| n.to_string());
+    let count_w = count_text.as_ref().map_or(0.0, |t| widgets::text_width(ui, t, &badge_font) + 10.0 + 4.0);
+    let (rect, resp) = widgets::tab_rect(ui, label, &font, count_w);
     if on {
-        p.rect_filled(rect, CornerRadius { nw: 6, ne: 6, sw: 0, se: 0 }, white(0.06));
+        widgets::tab_fill(ui, rect, 0.06);
     }
-    let color = if on {
-        Color32::WHITE
-    } else if resp.hovered() {
-        Color32::from_gray(0xdd)
-    } else {
-        style::TAB_IDLE
-    };
-    let text_pos = pos2(rect.left() + 10.0, rect.center().y - label_galley.size().y / 2.0);
-    let label_w = label_galley.size().x;
-    p.galley(text_pos, label_galley, color);
-    if let Some(g) = count_galley {
-        let pill = Rect::from_min_size(
-            pos2(text_pos.x + label_w + 4.0, rect.center().y - g.size().y / 2.0),
-            vec2(g.size().x + 10.0, g.size().y),
-        );
-        p.rect_filled(pill, 8.0, style::ACCENT);
-        p.galley(pill.center() - g.size() / 2.0, g, Color32::WHITE);
+    let color = widgets::tab_text_color(on, resp.hovered());
+    let label_w = widgets::text_width(ui, label, &font);
+    let label_rect = Rect::from_min_size(pos2(rect.left() + 10.0, rect.top()), vec2(label_w, rect.height()));
+    widgets::text_in(ui.painter(), label_rect, label, font, color);
+    if let Some(t) = count_text {
+        let w = widgets::text_width(ui, &t, &badge_font) + 10.0;
+        let pill = Rect::from_center_size(pos2(label_rect.right() + 4.0 + w / 2.0, rect.center().y), vec2(w, 14.0));
+        ui.painter().rect_filled(pill, 7.0, style::ACCENT);
+        widgets::text_in(ui.painter(), pill, &t, badge_font, Color32::WHITE);
     }
     resp.on_hover_cursor(CursorIcon::PointingHand)
 }
 
 /// One chat line: time, channel tag, player, badge, text (with colored emoji).
-fn message_row(ui: &mut Ui, row: &Row, mode: Mode, fs: f32) -> Response {
+fn message_row(ui: &mut Ui, row: &Row, mode: Mode, fs: f32, force_hover: bool) -> Response {
     let item = &row.item;
     let show_t = shows_translation(item, mode);
     let clickable = can_translate(item);
     let bg_slot = ui.painter().add(Shape::Noop);
     let body_h = fs * 1.35;
+    let row_id = Id::new(("msg-row", item.id));
+    // `.m:hover .orig`: hover is judged on the whole row as drawn last frame, so the
+    // original line shows up in the same frame the pointer enters the row.
+    let hovered = force_hover || ui.ctx().read_response(row_id).is_some_and(|r| ui.rect_contains_pointer(r.rect));
 
     let inner = Frame::new().inner_margin(Margin::symmetric(8, 3)).show(ui, |ui| {
         ui.set_width(ui.available_width());
@@ -578,9 +631,9 @@ fn message_row(ui: &mut Ui, row: &Row, mode: Mode, fs: f32) -> Response {
                 ui.horizontal_wrapped(|ui| {
                     ui.spacing_mut().item_spacing.x = 0.0;
                     let tab_c = tab_color(item.tab);
-                    chip(ui, &channel_label(&item.channel), fs * 0.8, tab_c, with_alpha(tab_c, 0x22), vec2(5.0, 0.0), 4, body_h, Sense::hover());
+                    chip(ui, &channel_label(&item.channel), widgets::semibold(fs * 0.8), tab_c, with_alpha(tab_c, 0x22), vec2(5.0, 0.0), 4, body_h, Sense::hover());
                     ui.add_space(5.0);
-                    ui.label(RichText::new(&item.player).color(class_color(item.class.as_deref())));
+                    ui.label(RichText::new(&item.player).family(widgets::semibold_family()).color(class_color(item.class.as_deref())));
                     if let Some(b) = badge(item, show_t) {
                         let (fg, bg) = match b.kind {
                             BadgeKind::Error => (style::ERROR_TEXT, style::ERROR_BG),
@@ -588,27 +641,27 @@ fn message_row(ui: &mut Ui, row: &Row, mode: Mode, fs: f32) -> Response {
                             BadgeKind::Lang => (style::SEG_TEXT, white(0.1)),
                         };
                         ui.add_space(5.0);
-                        chip(ui, &b.text, fs * 0.72, fg, bg, vec2(4.0, 0.0), 3, body_h, Sense::hover());
+                        chip(ui, &b.text, FontId::proportional(fs * 0.72), fg, bg, vec2(4.0, 0.0), 3, body_h, Sense::hover());
                     }
                     let text = if show_t { item.translated.as_deref().unwrap_or("") } else { &item.original };
                     let color = if item.status == Status::Pending { style::TEXT.gamma_multiply(0.55) } else { style::TEXT };
                     EmojiLabel::new(RichText::new(format!(": {text}")).color(color)).show(ui);
                 });
+                if hovered && show_t {
+                    ui.add(egui::Label::new(RichText::new(&item.original).italics().size(fs * 0.88).color(style::MUTED)).wrap());
+                }
             });
         });
     });
 
     let rect = inner.response.rect;
     let sense = if clickable { Sense::click() } else { Sense::hover() };
-    let resp = ui.interact(rect, Id::new(("msg-row", item.id)), sense);
-    if resp.hovered() {
+    let resp = ui.interact(rect, row_id, sense);
+    if hovered || resp.hovered() {
         let fill = if clickable { with_alpha(style::ACCENT, 36) } else { white(0.05) };
         ui.painter().set(bg_slot, egui::epaint::RectShape::filled(rect, 6.0, fill));
     }
     let mut tip = Vec::new();
-    if show_t {
-        tip.push(item.original.clone());
-    }
     if let Some(b) = badge(item, show_t).and_then(|b| b.tip) {
         tip.push(b);
     }

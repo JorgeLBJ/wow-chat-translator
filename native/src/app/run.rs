@@ -15,7 +15,7 @@ use super::shared::{Shared, StatusInfo};
 use super::style::{self, translator_label, ReaderState};
 use super::ui::OverlayApp;
 use super::win::{self, Hwnd};
-use super::{hotkey, instance, monitor, tray, workers};
+use super::{hotkey, instance, monitor, tray, widgets, workers};
 
 const ICON_256: &[u8] = include_bytes!("../../assets/icon-256.png");
 const ICON_32: &[u8] = include_bytes!("../../assets/icon-32.png");
@@ -74,7 +74,9 @@ pub fn run() -> eframe::Result {
                 }
             }
             let hwnd = shared.hwnd();
-            hwnd.exclude_from_capture();
+            if !win::dev_capture() {
+                hwnd.exclude_from_capture();
+            }
             // --hidden: invisible until revealed (eframe shows the window after frame 1).
             hwnd.set_opacity(if started_hidden { 0.0 } else { shared.config().prefs.opacity });
             if let Err(e) = tray::create(shared.clone(), ICON_32) {
@@ -120,8 +122,12 @@ fn setup_style(ctx: &egui::Context) {
     visuals.widgets.noninteractive.fg_stroke.color = style::TEXT;
     visuals.selection.bg_fill = style::ACCENT;
     visuals.slider_trailing_fill = true;
-    ctx.set_visuals(visuals);
-    ctx.style_mut(|s| {
+    // Always dark: with a light Windows theme egui would otherwise pick its light
+    // visuals (white slider fill, light inputs) under our dark panels.
+    ctx.set_theme(egui::ThemePreference::Dark);
+    ctx.set_visuals_of(egui::Theme::Dark, visuals);
+    widgets::install_fonts(ctx);
+    ctx.all_styles_mut(|s| {
         s.interaction.selectable_labels = false;
         s.spacing.slider_width = 80.0;
     });

@@ -197,6 +197,10 @@ pub fn copy_to_clipboard(owner: Hwnd, text: &str) -> Result<(), String> {
 /// focus (the user just pressed Enter or Esc in the compose box). True when WoW is now
 /// the foreground window.
 pub fn focus_game() -> bool {
+    if dev_capture() {
+        // Screenshot runs must never pull WoW to the front.
+        return true;
+    }
     use windows::core::w;
     use windows::Win32::UI::WindowsAndMessaging::{FindWindowW, IsIconic, ShowWindow, SW_RESTORE};
     unsafe {
@@ -210,4 +214,10 @@ pub fn focus_game() -> bool {
         let _ = SetForegroundWindow(game);
         GetForegroundWindow() == game
     }
+}
+
+/// Developer switch `WCT_DEV_CAPTURE=1`: the windows stay visible to screen capture
+/// (for UI screenshots) and WoW is never brought to the front. Off by default.
+pub fn dev_capture() -> bool {
+    std::env::var("WCT_DEV_CAPTURE").is_ok_and(|v| v == "1")
 }

@@ -5,7 +5,7 @@
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use eframe::egui::{
-    self, vec2, Align, Align2, Color32, CornerRadius, CursorIcon, FontId, Frame, Id, Key, Layout, Margin, Response,
+    self, vec2, Align, Color32, CornerRadius, CursorIcon, FontId, Frame, Id, Key, Layout, Margin, Response,
     RichText, ScrollArea, Sense, Stroke, Ui, ViewportBuilder, ViewportClass, ViewportCommand, ViewportId,
 };
 
@@ -25,6 +25,7 @@ use super::settings_form::{
 use super::shared::Shared;
 use super::style::{self, translator_label};
 use super::tray;
+use super::widgets::{self, ButtonKind};
 use super::win;
 
 pub const TITLE: &str = "Ajustes · WoW Chat Translator";
@@ -97,6 +98,16 @@ fn lock(state: &Mutex<SettingsState>) -> MutexGuard<'_, SettingsState> {
     state.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// Developer screenshots only: opens the window on `pane` (translate|window|general).
+pub fn dev_open(ctx: &egui::Context, shared: &Shared, state: &Arc<Mutex<SettingsState>>, pane: &str) {
+    open(ctx, shared, state);
+    lock(state).pane = match pane {
+        "window" => Pane::Window,
+        "general" => Pane::General,
+        _ => Pane::Translate,
+    };
+}
+
 /// ⚙: opens the window, or brings the open one to the front.
 pub fn open(ctx: &egui::Context, shared: &Shared, state: &Arc<Mutex<SettingsState>>) {
     if shared.settings_open() {
@@ -140,20 +151,19 @@ pub fn show(ctx: &egui::Context, shared: Arc<Shared>, state: Arc<Mutex<SettingsS
 }
 
 fn draw(ctx: &egui::Context, shared: &Arc<Shared>, state: &Arc<Mutex<SettingsState>>) {
-    egui::TopBottomPanel::top("settings-head")
+    let head = egui::TopBottomPanel::top("settings-head")
         .show_separator_line(false)
         .frame(Frame::new().fill(SHEET_BG).inner_margin(Margin { left: 14, right: 8, top: 8, bottom: 0 }))
         .show(ctx, |ui| {
-            let bar = ui.interact(ui.max_rect(), Id::new("settings-drag"), Sense::click_and_drag());
-            if bar.drag_started_by(egui::PointerButton::Primary) {
-                ctx.send_viewport_cmd(ViewportCommand::StartDrag);
-            }
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("Ajustes").size(15.0).strong().color(style::TEXT));
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if close_button(ui).clicked() {
-                        close(ctx, shared);
-                    }
+            let mut hot = false;
+            ui.allocate_ui_with_layout(vec2(ui.available_width(), 24.0), Layout::right_to_left(Align::Center), |ui| {
+                let r = close_button(ui);
+                hot |= r.contains_pointer();
+                if r.clicked() {
+                    close(ctx, shared);
+                }
+                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                    ui.label(RichText::new("Ajustes").size(14.0).family(widgets::semibold_family()).color(style::TEXT));
                 });
             });
             ui.add_space(6.0);
@@ -161,14 +171,19 @@ fn draw(ctx: &egui::Context, shared: &Arc<Shared>, state: &Arc<Mutex<SettingsSta
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 2.0;
                 for (label, pane) in [("Traducción", Pane::Translate), ("Ventana", Pane::Window), ("General", Pane::General)] {
-                    if stab(ui, label, st.pane == pane).clicked() {
+                    let r = stab(ui, label, st.pane == pane);
+                    hot |= r.contains_pointer();
+                    if r.clicked() {
                         st.pane = pane;
                     }
                 }
             });
             let y = ui.min_rect().bottom();
             ui.painter().hline(ui.max_rect().x_range(), y, Stroke::new(1.0_f32, Color32::from_white_alpha(20)));
+            hot
         });
+    // `.sheet-head` is a drag region: everywhere but the ✕ and the tabs moves the window.
+    widgets::caption_drag(ctx, Id::new("settings-caption"), head.response.rect, head.inner, None);
     egui::CentralPanel::default()
         .frame(Frame::new().fill(SHEET_BG).inner_margin(Margin { left: 14, right: 14, top: 8, bottom: 12 }))
         .show(ctx, |ui| {
@@ -189,6 +204,7 @@ fn draw(ctx: &egui::Context, shared: &Arc<Shared>, state: &Arc<Mutex<SettingsSta
 fn translate_pane(ui: &mut Ui, shared: &Arc<Shared>, state: &Arc<Mutex<SettingsState>>) {
     let mut st = lock(state);
     let full = ui.available_width();
+    widgets::field_style(ui);
 
     field_label(ui, "Proveedor");
     let mut provider = st.form.provider.clone();
@@ -208,12 +224,12 @@ fn translate_pane(ui: &mut Ui, shared: &Arc<Shared>, state: &Arc<Mutex<SettingsS
     if is_llm(&p) {
         if shows_url(&p) {
             field_label(ui, "URL del servidor");
-            ui.add(egui::TextEdit::singleline(&mut st.form.base_url).desired_width(full));
+            ui.add(input(&mut st.form.base_url).desired_width(full));
         }
         if shows_key(&p) {
             field_label(ui, "Clave API");
             let placeholder = key_placeholder(&p, &st.saved);
-            let resp = ui.add(egui::TextEdit::singleline(&mut st.key_text).password(true).hint_text(placeholder).desired_width(full));
+            let resp = ui.add(input(&mut st.key_text).password(true).hint_text(dim(placeholder)).desired_width(full));
             if resp.changed() {
                 st.form.key = KeyInput::Typed(st.key_text.clone());
             }
@@ -222,10 +238,10 @@ fn translate_pane(ui: &mut Ui, shared: &Arc<Shared>, state: &Arc<Mutex<SettingsS
         field_label(ui, "Modelo");
         let mut load = false;
         ui.horizontal(|ui| {
-            let button_w = 120.0;
+            let button_w = widgets::text_width(ui, "Cargar modelos", &FontId::proportional(12.0)) + 28.0;
             let list_w = if st.models.is_empty() { 0.0 } else { 30.0 };
             let edit_w = (ui.available_width() - button_w - list_w).max(80.0);
-            ui.add(egui::TextEdit::singleline(&mut st.form.model).hint_text(MODEL_PLACEHOLDER).desired_width(edit_w));
+            ui.add(input(&mut st.form.model).hint_text(dim(MODEL_PLACEHOLDER)).desired_width(edit_w));
             if !st.models.is_empty() {
                 let mut chosen = None;
                 egui::ComboBox::from_id_salt("t-models").width(18.0).selected_text("").show_ui(ui, |ui| {
@@ -239,7 +255,7 @@ fn translate_pane(ui: &mut Ui, shared: &Arc<Shared>, state: &Arc<Mutex<SettingsS
                     st.form.model = m;
                 }
             }
-            load = ui.add_enabled(!st.busy, button("Cargar modelos", false)).clicked();
+            load = widgets::button(ui, "Cargar modelos", ButtonKind::Normal, !st.busy).clicked();
         });
         hint(ui, FALLBACK_HINT);
         if load {
@@ -260,10 +276,11 @@ fn translate_pane(ui: &mut Ui, shared: &Arc<Shared>, state: &Arc<Mutex<SettingsS
 
     ui.add_space(10.0);
     ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
-        if ui.add_enabled(!st.busy, button("Guardar traductor", true)).clicked() {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        if widgets::button(ui, "Guardar traductor", ButtonKind::Primary, !st.busy).clicked() {
             save(shared, &mut st);
         }
-        if ui.add_enabled(!st.busy, button("Probar", false)).clicked() {
+        if widgets::button(ui, "Probar", ButtonKind::Normal, !st.busy).clicked() {
             st.result = Some(("Probando…".into(), Kind::Neutral));
             spawn_job(ui.ctx(), shared, state, &mut st, Job::Probe);
         }
@@ -416,13 +433,13 @@ fn general_pane(ui: &mut Ui, shared: &Arc<Shared>) {
         }
     });
     row(ui, "Mensajes", "Borra la lista de mensajes de la ventana del chat.", |ui| {
-        if ui.add(button("Limpiar", false)).clicked() {
+        if widgets::button(ui, "Limpiar", ButtonKind::Normal, true).clicked() {
             shared.clear_messages();
         }
     });
 
     ui.add_space(6.0);
-    ui.label(RichText::new("Atajo (solo con WoW abierto)").strong().size(12.0).color(style::TEXT));
+    ui.label(RichText::new("Atajo (solo con WoW abierto)").family(widgets::semibold_family()).size(12.0).color(style::TEXT));
     ui.horizontal(|ui| {
         kbd(ui, "Ctrl+Shift+Enter");
         ui.label(RichText::new("Escribir un mensaje").size(12.0).color(style::TEXT));
@@ -430,13 +447,13 @@ fn general_pane(ui: &mut Ui, shared: &Arc<Shared>) {
     separator_line(ui);
 
     row(ui, "Salir", "Cierra la app por completo. ✕ solo la oculta.", |ui| {
-        if ui.add(button("Salir de la app", false)).on_hover_cursor(CursorIcon::PointingHand).clicked() {
+        if widgets::button(ui, "Salir de la app", ButtonKind::Danger, true).clicked() {
             tray::quit_app(shared);
         }
     });
 
     ui.add_space(6.0);
-    ui.label(RichText::new("Acerca de").strong().size(12.0).color(style::TEXT));
+    ui.label(RichText::new("Acerca de").family(widgets::semibold_family()).size(12.0).color(style::TEXT));
     hint(ui, "Emoji: gráficos de Twemoji (© Twitter, Inc. y otros colaboradores), con licencia CC-BY 4.0: https://github.com/twitter/twemoji");
     hint(ui, "El diseño de la franja de píxeles se inspiró en Parley y LibSerpix (licencia MIT).");
 }
@@ -462,7 +479,7 @@ fn row(ui: &mut Ui, title: &str, hint_text: &str, control: impl FnOnce(&mut Ui))
         let text_w = (ui.available_width() - control_w - 12.0).max(120.0);
         ui.vertical(|ui| {
             ui.set_width(text_w);
-            ui.label(RichText::new(title).strong().size(13.0).color(style::TEXT));
+            ui.label(RichText::new(title).family(widgets::semibold_family()).size(12.5).color(style::TEXT));
             hint(ui, hint_text);
         });
         ui.with_layout(Layout::right_to_left(Align::Center), control);
@@ -477,21 +494,21 @@ fn separator_line(ui: &mut Ui) {
     ui.add_space(1.0);
 }
 
-fn button(text: &str, primary: bool) -> egui::Button<'static> {
-    let (fg, bg) = if primary { (Color32::WHITE, style::ACCENT) } else { (Color32::from_gray(0xdd), Color32::from_white_alpha(20)) };
-    egui::Button::new(RichText::new(text.to_string()).size(12.0).color(fg))
-        .fill(bg)
-        .stroke(Stroke::NONE)
-        .corner_radius(CornerRadius::same(6))
-        .min_size(vec2(0.0, 26.0))
+/// A text input with the bright typed text of the Electron inputs (`#eee`).
+fn input(text: &mut String) -> egui::TextEdit<'_> {
+    egui::TextEdit::singleline(text).text_color(widgets::INPUT_TEXT).margin(Margin::symmetric(8, 5))
 }
 
+fn dim(text: &str) -> RichText {
+    RichText::new(text).color(HINT)
+}
+
+/// `kbd`: 11 px text on a rounded grey box, centered like every other control.
 fn kbd(ui: &mut Ui, text: &str) {
-    Frame::new()
-        .fill(Color32::from_white_alpha(20))
-        .corner_radius(CornerRadius::same(4))
-        .inner_margin(Margin::symmetric(6, 1))
-        .show(ui, |ui| ui.label(RichText::new(text).size(11.0).color(style::TEXT)));
+    let font = FontId::proportional(11.0);
+    let (rect, _) = ui.allocate_exact_size(vec2(widgets::text_width(ui, text, &font) + 12.0, 18.0), Sense::hover());
+    ui.painter().rect_filled(rect, CornerRadius::same(4), Color32::from_white_alpha(20));
+    widgets::text_in(ui.painter(), rect, text, font, style::TEXT);
 }
 
 /// The `.switch` toggle.
@@ -508,20 +525,14 @@ fn switch(ui: &mut Ui, on: &mut bool) -> Response {
     resp.on_hover_cursor(CursorIcon::PointingHand)
 }
 
+/// `.stab`: 12 px, 5×10 px padding, rounded top corners.
 fn stab(ui: &mut Ui, label: &str, on: bool) -> Response {
-    let galley = ui.painter().layout_no_wrap(label.to_owned(), FontId::proportional(12.0), Color32::WHITE);
-    let (rect, resp) = ui.allocate_exact_size(galley.size() + vec2(20.0, 10.0), Sense::click());
+    let font = FontId::proportional(12.0);
+    let (rect, resp) = widgets::tab_rect(ui, label, &font, 0.0);
     if on {
-        ui.painter().rect_filled(rect, CornerRadius { nw: 6, ne: 6, sw: 0, se: 0 }, Color32::from_white_alpha(18));
+        widgets::tab_fill(ui, rect, 0.07);
     }
-    let color = if on {
-        Color32::WHITE
-    } else if resp.hovered() {
-        Color32::from_gray(0xdd)
-    } else {
-        style::TAB_IDLE
-    };
-    ui.painter().galley(rect.center() - galley.size() / 2.0, galley, color);
+    widgets::text_in(ui.painter(), rect, label, font, widgets::tab_text_color(on, resp.hovered()));
     resp.on_hover_cursor(CursorIcon::PointingHand)
 }
 
@@ -531,6 +542,6 @@ fn close_button(ui: &mut Ui) -> Response {
         ui.painter().rect_filled(rect, 5.0, style::CLOSE_HOVER);
     }
     let color = if resp.hovered() { Color32::WHITE } else { style::ICON };
-    ui.painter().text(rect.center(), Align2::CENTER_CENTER, "🗙", FontId::proportional(13.0), color);
+    widgets::text_in(ui.painter(), rect, "✕", FontId::proportional(13.0), color);
     resp.on_hover_text("Cerrar")
 }

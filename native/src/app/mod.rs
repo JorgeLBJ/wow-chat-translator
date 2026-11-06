@@ -29,6 +29,8 @@ pub mod tray;
 #[cfg(windows)]
 pub mod ui;
 #[cfg(windows)]
+pub mod widgets;
+#[cfg(windows)]
 pub mod win;
 #[cfg(windows)]
 pub mod workers;
