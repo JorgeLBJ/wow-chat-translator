@@ -139,6 +139,7 @@ fn run(shared: Arc<Shared>) {
             match watcher.update(capture::is_game_running()) {
                 Some(GameChange::Started) => {
                     shared.log.write("game started");
+                    shared.set_game_running(true);
                     shared.reset_user_hidden();
                     reader.reset();
                     shared.set_reader(ReaderState::Starting);
@@ -146,6 +147,7 @@ fn run(shared: Arc<Shared>) {
                 }
                 Some(GameChange::Exited) => {
                     shared.log.write("game exited");
+                    shared.set_game_running(false);
                     reader.reset();
                     // Hidden through the gate: never while the user is typing in it.
                     gate.lost(now_ms());

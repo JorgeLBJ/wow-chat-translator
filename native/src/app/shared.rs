@@ -64,6 +64,12 @@ pub struct Shared {
     hwnd: AtomicIsize,
     /// Hidden with ✕: strip presence must not show it again until the user does.
     user_hidden: AtomicBool,
+    /// Wow.exe is running (the global hotkey exists only then).
+    game_running: AtomicBool,
+    /// Ctrl+Shift+Enter was pressed: the compose box must take the keyboard focus.
+    compose_focus: AtomicBool,
+    /// The settings window is open (single instance).
+    settings_open: AtomicBool,
     ctx: OnceLock<egui::Context>,
     pub instance: Option<InstanceGuard>,
 }
@@ -94,6 +100,9 @@ impl Shared {
             jobs,
             hwnd: AtomicIsize::new(0),
             user_hidden: AtomicBool::new(false),
+            game_running: AtomicBool::new(false),
+            compose_focus: AtomicBool::new(false),
+            settings_open: AtomicBool::new(false),
             ctx: OnceLock::new(),
             instance,
         }
@@ -123,9 +132,10 @@ impl Shared {
         Hwnd(self.hwnd.load(Ordering::SeqCst))
     }
 
+    /// Repaints the overlay (also when called from the settings window's frame).
     pub fn repaint(&self) {
         if let Some(ctx) = self.ctx.get() {
-            ctx.request_repaint();
+            ctx.request_repaint_of(egui::ViewportId::ROOT);
         }
     }
 
@@ -198,6 +208,46 @@ impl Shared {
                 self.complete(id, Err("sin traductor".into()));
             }
         }
+    }
+
+    /// "Limpiar mensajes": empties the overlay list.
+    pub fn clear_messages(&self) {
+        self.model().list.clear();
+        self.log.write("messages cleared");
+        self.repaint();
+    }
+
+    // Game, hotkey, settings -------------------------------------------------------------
+
+    pub fn set_game_running(&self, running: bool) {
+        self.game_running.store(running, Ordering::SeqCst);
+    }
+
+    pub fn game_running(&self) -> bool {
+        self.game_running.load(Ordering::SeqCst)
+    }
+
+    /// Ctrl+Shift+Enter: show and activate the overlay, then focus the compose box.
+    pub fn request_compose_focus(&self) {
+        self.compose_focus.store(true, Ordering::SeqCst);
+        self.show_by_user();
+    }
+
+    pub fn take_compose_focus(&self) -> bool {
+        self.compose_focus.swap(false, Ordering::SeqCst)
+    }
+
+    pub fn settings_open(&self) -> bool {
+        self.settings_open.load(Ordering::SeqCst)
+    }
+
+    pub fn set_settings_open(&self, open: bool) {
+        self.settings_open.store(open, Ordering::SeqCst);
+        self.repaint();
+    }
+
+    pub fn ctx(&self) -> Option<&egui::Context> {
+        self.ctx.get()
     }
 
     // Window visibility ---------------------------------------------------------------

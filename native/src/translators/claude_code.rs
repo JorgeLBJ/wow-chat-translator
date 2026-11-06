@@ -131,13 +131,13 @@ impl CliRunner for ProcessRunner {
             match child.try_wait() {
                 Ok(Some(status)) => break status,
                 Ok(None) if Instant::now() >= deadline => {
-                    let _ = child.kill();
+                    kill_tree(&mut child);
                     let _ = child.wait();
                     return Err(format!("sin respuesta tras {} s (time out)", timeout.as_secs()));
                 }
                 Ok(None) => std::thread::sleep(Duration::from_millis(15)),
                 Err(e) => {
-                    let _ = child.kill();
+                    kill_tree(&mut child);
                     return Err(e.to_string());
                 }
             }
@@ -151,6 +151,38 @@ impl CliRunner for ProcessRunner {
             stderr: stderr.recv_timeout(grace).unwrap_or_default(),
         })
     }
+}
+
+/// `taskkill` arguments that end a process and every process it started.
+pub fn kill_tree_args(pid: u32) -> Vec<String> {
+    vec!["/PID".into(), pid.to_string(), "/T".into(), "/F".into()]
+}
+
+/// Ends the child and its descendants. An npm `claude.cmd` shim runs `cmd.exe`, which
+/// starts `node`: killing only the shim would leave `node` running. `taskkill /T` walks
+/// the tree while the child still exists; `kill` is the fallback.
+fn kill_tree(child: &mut std::process::Child) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let mut cmd = Command::new("taskkill");
+        cmd.args(kill_tree_args(child.id()))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .creation_flags(0x0800_0000);
+        if let Ok(mut killer) = cmd.spawn() {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while Instant::now() < deadline {
+                if !matches!(killer.try_wait(), Ok(None)) {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            let _ = killer.kill();
+        }
+    }
+    let _ = child.kill();
 }
 
 /// At most `max` tasks run at once. A finishing task hands its slot straight to the

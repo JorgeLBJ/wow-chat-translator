@@ -15,7 +15,7 @@ use super::shared::{Shared, StatusInfo};
 use super::style::{self, translator_label, ReaderState};
 use super::ui::OverlayApp;
 use super::win::{self, Hwnd};
-use super::{instance, monitor, tray, workers};
+use super::{hotkey, instance, monitor, tray, workers};
 
 const ICON_256: &[u8] = include_bytes!("../../assets/icon-256.png");
 const ICON_32: &[u8] = include_bytes!("../../assets/icon-32.png");
@@ -82,7 +82,9 @@ pub fn run() -> eframe::Result {
             }
             workers::spawn(shared.clone(), job_rx);
             monitor::spawn(shared.clone());
-            Ok(Box::new(OverlayApp::new(shared, started_hidden)))
+            hotkey::spawn(shared.clone());
+            let icon = eframe::icon_data::from_png_bytes(ICON_256).ok().map(Arc::new);
+            Ok(Box::new(OverlayApp::new(shared, started_hidden, icon)))
         }),
     )
 }

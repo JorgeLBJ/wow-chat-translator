@@ -22,6 +22,20 @@ pub trait HttpClient: Send + Sync {
     fn post(&self, url: &str, headers: &[(String, String)], body: &str, timeout: Duration) -> Result<HttpResponse, String>;
 }
 
+/// ureq's default redirect limit.
+pub const DEFAULT_MAX_REDIRECTS: u32 = 10;
+
+/// Redirects a request may follow. ureq drops `Authorization` on redirects but keeps
+/// other headers, so a request carrying `x-api-key` (Anthropic) follows none: the key
+/// can never reach another host. The 3xx answer comes back as an HTTP error.
+pub fn max_redirects_for(headers: &[(String, String)]) -> u32 {
+    if headers.iter().any(|(k, _)| k.eq_ignore_ascii_case("x-api-key")) {
+        0
+    } else {
+        DEFAULT_MAX_REDIRECTS
+    }
+}
+
 /// Real client: ureq over rustls.
 pub struct UreqClient {
     agent: ureq::Agent,
@@ -49,7 +63,13 @@ fn read(result: Result<ureq::http::Response<ureq::Body>, ureq::Error>) -> Result
 
 impl HttpClient for UreqClient {
     fn get(&self, url: &str, headers: &[(String, String)], timeout: Duration) -> Result<HttpResponse, String> {
-        let mut req = self.agent.get(url).config().timeout_global(Some(timeout)).build();
+        let mut req = self
+            .agent
+            .get(url)
+            .config()
+            .timeout_global(Some(timeout))
+            .max_redirects(max_redirects_for(headers))
+            .build();
         for (k, v) in headers {
             req = req.header(k.as_str(), v.as_str());
         }
@@ -57,7 +77,13 @@ impl HttpClient for UreqClient {
     }
 
     fn post(&self, url: &str, headers: &[(String, String)], body: &str, timeout: Duration) -> Result<HttpResponse, String> {
-        let mut req = self.agent.post(url).config().timeout_global(Some(timeout)).build();
+        let mut req = self
+            .agent
+            .post(url)
+            .config()
+            .timeout_global(Some(timeout))
+            .max_redirects(max_redirects_for(headers))
+            .build();
         for (k, v) in headers {
             req = req.header(k.as_str(), v.as_str());
         }

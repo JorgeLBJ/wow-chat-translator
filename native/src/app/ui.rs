@@ -1,24 +1,30 @@
 //! The overlay window drawing (port of `app/src/renderer/overlay.html` + `overlay.js`).
 //! Only drawing and input here; state rules live in `messages`, `style`, `shared`.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use eframe::egui::{
     self, pos2, vec2, Align, Align2, Color32, CornerRadius, CursorIcon, FontId, Frame, Id, LayerId, Layout, Margin,
-    Order, Rect, Response, RichText, Sense, Shape, Stroke, StrokeKind, TextStyle, Ui, ViewportCommand,
+    Key, Order, Rect, Response, RichText, Sense, Shape, Stroke, StrokeKind, TextStyle, Ui, ViewportCommand,
 };
 use egui_twemoji::EmojiLabel;
 
 use crate::core::pipeline::Status;
 use crate::core::prefs::Bounds;
 
+use super::compose::{self, copied_message, failed_message, translate_outgoing, OUT_LANGS};
 use super::messages::{badge, can_translate, shows_translation, BadgeKind, Mode, Row, Tab};
+use super::settings::{self, SettingsState};
 use super::shared::Shared;
 use super::style::{self, channel_label, class_color, tab_color};
+use super::win;
 
 const BOUNDS_SAVE_DELAY: Duration = Duration::from_millis(600);
 const PAUSED_NOTE: &str = "⏸ En pausa · clic en un mensaje para traducir";
+const COMPOSE_ID: &str = "compose-input";
+const COPIED: Color32 = Color32::from_rgb(0x86, 0xef, 0xac);
+const FAILED: Color32 = Color32::from_rgb(0xfc, 0xa5, 0xa5);
 const EMPTY: &str = "Sin mensajes todavía. Aparecerán aquí en cuanto alguien escriba en el chat.";
 
 fn white(alpha: f32) -> Color32 {
@@ -38,12 +44,34 @@ pub struct OverlayApp {
     opacity: f32,
     last_bounds: Option<Bounds>,
     bounds_dirty_since: Option<Instant>,
+    settings: Arc<Mutex<SettingsState>>,
+    icon: Option<Arc<egui::IconData>>,
+    compose: Compose,
+}
+
+/// The compose box: text, EN/ES, the last result line and the running translation.
+struct Compose {
+    text: String,
+    lang: &'static str,
+    preview: Option<(String, Color32)>,
+    pending: Arc<Mutex<Option<Result<String, String>>>>,
+    busy: bool,
+}
+
+impl Default for Compose {
+    fn default() -> Self {
+        Self { text: String::new(), lang: "en", preview: None, pending: Arc::new(Mutex::new(None)), busy: false }
+    }
 }
 
 impl OverlayApp {
-    pub fn new(shared: Arc<Shared>, started_hidden: bool) -> Self {
+    pub fn new(shared: Arc<Shared>, started_hidden: bool, icon: Option<Arc<egui::IconData>>) -> Self {
         let opacity = shared.config().prefs.opacity;
+        let settings = Arc::new(Mutex::new(SettingsState::new(&shared)));
         Self {
+            settings,
+            icon,
+            compose: Compose::default(),
             shared,
             mode: Mode::Translated,
             started_hidden,
@@ -119,8 +147,7 @@ impl OverlayApp {
                 }
                 separator(ui);
                 if icon_button(ui, "⚙", style::ICON, None, white(0.1), "Ajustes").clicked() {
-                    self.shared.status().transient =
-                        Some(("Ajustes: próximamente".into(), Instant::now() + Duration::from_secs(3)));
+                    settings::open(&ctx, &self.shared, &self.settings);
                 }
                 if pin_button(ui, on_top).clicked() {
                     let next = !on_top;
@@ -232,7 +259,12 @@ impl OverlayApp {
         if let Some((_, until)) = &transient {
             ui.ctx().request_repaint_after(until.saturating_duration_since(Instant::now()));
         }
-        let paused = self.shared.config().prefs.translation_paused;
+        // The settings window changes the opacity too: always show the saved value.
+        let (paused, opacity) = {
+            let c = self.shared.config();
+            (c.prefs.translation_paused, c.prefs.opacity)
+        };
+        self.opacity = opacity;
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 10.0;
             let (dot, _) = ui.allocate_exact_size(vec2(7.0, 7.0), Sense::hover());
@@ -241,10 +273,10 @@ impl OverlayApp {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let resp = ui.add(egui::Slider::new(&mut self.opacity, 0.4..=1.0).show_value(false));
                 if resp.changed() {
+                    self.shared.config().prefs.opacity = self.opacity;
                     self.shared.hwnd().set_opacity(self.opacity);
                 }
                 if resp.drag_stopped() || (resp.changed() && !resp.dragged()) {
-                    self.shared.config().prefs.opacity = self.opacity;
                     self.shared.save_config();
                 }
                 ui.label(RichText::new("Opacidad").size(11.0).color(style::MUTED));
@@ -265,6 +297,82 @@ impl OverlayApp {
                 });
             });
         });
+    }
+
+    // Compose ----------------------------------------------------------------------------
+
+    fn compose(&mut self, ui: &mut Ui) {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            let toggle_w = 64.0;
+            let edit = egui::TextEdit::singleline(&mut self.compose.text)
+                .id(Id::new(COMPOSE_ID))
+                .hint_text(compose::PLACEHOLDER)
+                .desired_width((ui.available_width() - toggle_w).max(60.0))
+                .margin(Margin::symmetric(8, 4))
+                .background_color(white(0.06));
+            let resp = ui.add(edit);
+            if resp.lost_focus() {
+                let (enter, esc) = ui.input(|i| (i.key_pressed(Key::Enter), i.key_pressed(Key::Escape)));
+                if esc {
+                    win::focus_game();
+                } else if enter {
+                    self.send_compose(ui.ctx());
+                }
+            }
+            Frame::new().fill(white(0.07)).corner_radius(CornerRadius::same(6)).inner_margin(Margin::same(2)).show(ui, |ui| {
+                ui.spacing_mut().item_spacing.x = 0.0;
+                for (code, label) in OUT_LANGS {
+                    let on = self.compose.lang == code;
+                    let (fg, bg) = if on { (Color32::WHITE, style::ACCENT) } else { (style::SEG_TEXT, Color32::TRANSPARENT) };
+                    if chip(ui, label, 11.0, fg, bg, vec2(8.0, 2.0), 5, 20.0, Sense::click()).clicked() {
+                        self.compose.lang = code;
+                        ui.memory_mut(|m| m.request_focus(Id::new(COMPOSE_ID)));
+                    }
+                }
+            });
+        });
+        if let Some((text, color)) = &self.compose.preview {
+            ui.add(egui::Label::new(RichText::new(text).size(11.5).color(*color)).wrap());
+        }
+    }
+
+    /// Enter: translate (or pass Spanish through) off the UI thread.
+    fn send_compose(&mut self, ctx: &egui::Context) {
+        if self.compose.text.trim().is_empty() || self.compose.busy {
+            return;
+        }
+        self.compose.busy = true;
+        self.compose.preview = Some((compose::TRANSLATING.into(), style::MUTED));
+        let (text, lang) = (self.compose.text.clone(), self.compose.lang);
+        let (shared, pending) = (self.shared.clone(), self.compose.pending.clone());
+        let ctx = ctx.clone();
+        let _ = std::thread::Builder::new().name("compose".into()).spawn(move || {
+            let translator = shared.translator();
+            let result = translate_outgoing(&text, lang, &*translator);
+            *pending.lock().unwrap_or_else(|e| e.into_inner()) = Some(result);
+            ctx.request_repaint_of(egui::ViewportId::ROOT);
+        });
+    }
+
+    /// The translation is back: copy it, say so and bring WoW to the front.
+    fn finish_compose(&mut self) {
+        let Some(result) = self.compose.pending.lock().unwrap_or_else(|e| e.into_inner()).take() else { return };
+        self.compose.busy = false;
+        match result.and_then(|out| win::copy_to_clipboard(self.shared.hwnd(), &out).map(|()| out)) {
+            Ok(out) => {
+                self.compose.preview = Some((copied_message(&out), COPIED));
+                self.compose.text.clear();
+                // Like Parley: WoW comes back, ready for Enter, Ctrl+V, Enter.
+                if !win::focus_game() {
+                    self.shared.log.write("focus-game failed");
+                }
+            }
+            Err(e) => {
+                self.shared.log.write(&format!("compose failed: {e}"));
+                self.compose.preview = Some((failed_message(&e), FAILED));
+            }
+        }
     }
 
     fn chrome(&self, ctx: &egui::Context, maximized: bool) {
@@ -308,6 +416,13 @@ impl eframe::App for OverlayApp {
             self.shared.hide_by_user();
         }
         self.persist_bounds(ctx);
+        self.finish_compose();
+        if self.shared.take_compose_focus() {
+            ctx.memory_mut(|m| m.request_focus(Id::new(COMPOSE_ID)));
+        }
+        if self.shared.settings_open() {
+            settings::show(ctx, self.shared.clone(), self.settings.clone(), self.icon.clone());
+        }
         let maximized = ctx.input(|i| i.viewport().maximized).unwrap_or(false);
         let font_size = self.shared.config().prefs.font_size.clamp(9.0, 28.0);
 
@@ -328,6 +443,13 @@ impl eframe::App for OverlayApp {
             .show(ctx, |ui| {
                 hline(ui, ui.max_rect().top() - 5.0);
                 self.footer(ui);
+            });
+        egui::TopBottomPanel::bottom("compose")
+            .show_separator_line(false)
+            .frame(Frame::new().fill(style::BG).inner_margin(Margin { left: 10, right: 10, top: 8, bottom: 6 }))
+            .show(ctx, |ui| {
+                hline(ui, ui.max_rect().top() - 8.0);
+                self.compose(ui);
             });
         egui::CentralPanel::default().frame(Frame::new().fill(style::BG).inner_margin(Margin::same(6))).show(ctx, |ui| {
             hline(ui, ui.max_rect().top() - 6.0);

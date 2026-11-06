@@ -16,6 +16,17 @@ use super::shared::Shared;
 
 thread_local! {
     static TRAY: RefCell<Option<TrayIcon>> = const { RefCell::new(None) };
+    static AUTO_ITEM: RefCell<Option<CheckMenuItem>> = const { RefCell::new(None) };
+}
+
+/// Keeps the tray checkbox in step when the settings window changes "Iniciar con
+/// Windows" (both run on the UI thread).
+pub fn set_autostart_checked(checked: bool) {
+    AUTO_ITEM.with(|a| {
+        if let Some(item) = a.borrow().as_ref() {
+            item.set_checked(checked);
+        }
+    });
 }
 
 pub fn create(shared: Arc<Shared>, icon_png: &[u8]) -> Result<(), String> {
@@ -37,6 +48,7 @@ pub fn create(shared: Arc<Shared>, icon_png: &[u8]) -> Result<(), String> {
         .build()
         .map_err(|e| e.to_string())?;
     TRAY.with(|t| *t.borrow_mut() = Some(tray));
+    AUTO_ITEM.with(|a| *a.borrow_mut() = Some(auto.clone()));
 
     let (show_id, auto_id, quit_id) = (show.id().clone(), auto.id().clone(), quit.id().clone());
     let s = shared.clone();

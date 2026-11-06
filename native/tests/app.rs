@@ -363,3 +363,304 @@ fn autostart_command_quotes_the_exe_and_starts_hidden() {
         r#""C:\Program Files\WCT\wow-chat-translator.exe" --hidden"#
     );
 }
+
+// E5: settings form (translator:get/set/models/test semantics) and compose -----------
+
+mod e5 {
+    use std::cell::RefCell;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use wow_chat_translator::app::compose::{copied_message, failed_message, translate_outgoing};
+    use wow_chat_translator::app::settings_form::{
+        form_for_provider, key_placeholder, load_models, models_message, probe, request_key, save_translator,
+        saved_translator, validate_form, KeyInput, TranslatorForm, TEST_SAMPLE,
+    };
+    use wow_chat_translator::core::pipeline::{Translation, Translator};
+    use wow_chat_translator::core::prefs::{Config, TranslatorSettings};
+    use wow_chat_translator::secret::{encrypt_api_key, read_api_key};
+    use wow_chat_translator::translators::key_binding::key_binding;
+    use wow_chat_translator::translators::{Llm, ModelSource};
+
+    const OR_URL: &str = "https://openrouter.ai/api/v1";
+
+    fn form(provider: &str, url: &str, model: &str, key: KeyInput) -> TranslatorForm {
+        TranslatorForm { provider: provider.into(), base_url: url.into(), model: model.into(), key }
+    }
+
+    fn saved(provider: &str, url: &str, enc: Option<&str>, binding: Option<String>) -> TranslatorSettings {
+        TranslatorSettings {
+            provider: provider.into(),
+            base_url: url.into(),
+            model: "m".into(),
+            api_key_enc: enc.map(String::from),
+            key_binding: binding,
+        }
+    }
+
+    fn no_encrypt(_: &str) -> Result<String, String> {
+        panic!("must not encrypt")
+    }
+
+    fn fake_encrypt(k: &str) -> Result<String, String> {
+        Ok(format!("ENC({k})"))
+    }
+
+    // Save ---------------------------------------------------------------------------
+
+    #[test]
+    fn save_keeps_the_saved_key_when_untouched_and_the_binding_is_unchanged() {
+        let prev = saved("openrouter", OR_URL, Some("E1"), Some(key_binding("openrouter", OR_URL)));
+        let f = form("openrouter", " https://openrouter.ai/api/v1/ ", " gpt ", KeyInput::Untouched);
+        let next = save_translator(&prev, &f, &no_encrypt).unwrap();
+        assert_eq!(next.provider, "openrouter");
+        assert_eq!(next.base_url, "https://openrouter.ai/api/v1/");
+        assert_eq!(next.model, "gpt");
+        assert_eq!(next.api_key_enc.as_deref(), Some("E1"));
+        assert_eq!(next.key_binding, Some(key_binding("openrouter", OR_URL)));
+    }
+
+    #[test]
+    fn save_drops_an_untouched_key_when_the_server_or_provider_changes() {
+        let prev = saved("openrouter", OR_URL, Some("E1"), Some(key_binding("openrouter", OR_URL)));
+        let other_url =
+            save_translator(&prev, &form("openrouter", "https://evil.example/v1", "m", KeyInput::Untouched), &no_encrypt).unwrap();
+        assert_eq!((other_url.api_key_enc, other_url.key_binding), (None, None));
+        let other_provider = save_translator(&prev, &form("custom", OR_URL, "m", KeyInput::Untouched), &no_encrypt).unwrap();
+        assert_eq!((other_provider.api_key_enc, other_provider.key_binding), (None, None));
+    }
+
+    #[test]
+    fn save_deletes_the_key_when_the_field_is_emptied() {
+        let prev = saved("openrouter", OR_URL, Some("E1"), Some(key_binding("openrouter", OR_URL)));
+        for typed in ["", "   "] {
+            let f = form("openrouter", OR_URL, "m", KeyInput::Typed(typed.into()));
+            let next = save_translator(&prev, &f, &no_encrypt).unwrap();
+            assert_eq!((next.api_key_enc, next.key_binding), (None, None), "{typed:?}");
+        }
+    }
+
+    #[test]
+    fn save_encrypts_a_new_key_and_binds_it_to_provider_and_server() {
+        let prev = TranslatorSettings::default();
+        let f = form("lmstudio", "", "qwen", KeyInput::Typed(" sk-new ".into()));
+        let next = save_translator(&prev, &f, &fake_encrypt).unwrap();
+        assert_eq!(next.api_key_enc.as_deref(), Some("ENC(sk-new)"));
+        assert_eq!(next.key_binding, Some(key_binding("lmstudio", "http://localhost:1234/v1")));
+    }
+
+    #[test]
+    fn save_refuses_anthropic_without_a_key_and_unknown_providers() {
+        let prev = TranslatorSettings::default();
+        let missing = Err("Pega tu clave API de Anthropic antes de guardar".to_string());
+        assert_eq!(save_translator(&prev, &form("anthropic", "", "claude-haiku-5-5", KeyInput::Untouched), &no_encrypt), missing);
+        assert_eq!(
+            save_translator(&prev, &form("anthropic", "", "claude-haiku-5-5", KeyInput::Typed(" ".into())), &no_encrypt),
+            missing
+        );
+        assert_eq!(
+            save_translator(&prev, &form("deepl", "", "m", KeyInput::Untouched), &no_encrypt),
+            Err("Proveedor desconocido".to_string())
+        );
+    }
+
+    #[test]
+    fn save_keeps_an_anthropic_key_whatever_the_url_field_holds() {
+        let binding = key_binding("anthropic", "https://api.anthropic.com");
+        let prev = saved("anthropic", "", Some("E2"), Some(binding.clone()));
+        let f = form("anthropic", "https://evil.example", "claude-haiku-5-5", KeyInput::Untouched);
+        let next = save_translator(&prev, &f, &no_encrypt).unwrap();
+        assert_eq!(next.api_key_enc.as_deref(), Some("E2"));
+        assert_eq!(next.key_binding, Some(binding));
+    }
+
+    #[test]
+    fn save_reports_when_the_key_cannot_be_encrypted() {
+        let fail = |_: &str| -> Result<String, String> { Err("x".into()) };
+        let f = form("openrouter", "", "m", KeyInput::Typed("k".into()));
+        assert_eq!(
+            save_translator(&TranslatorSettings::default(), &f, &fail),
+            Err("Windows no permite cifrar la clave; no se guardó".to_string())
+        );
+    }
+
+    #[test]
+    fn a_model_is_required_before_saving_an_llm() {
+        assert_eq!(
+            validate_form(&form("openrouter", "", " ", KeyInput::Untouched)),
+            Err("Elige un modelo antes de guardar.".to_string())
+        );
+        assert_eq!(validate_form(&form("google", "", "", KeyInput::Untouched)), Ok(()));
+        assert_eq!(validate_form(&form("lmstudio", "", "qwen", KeyInput::Untouched)), Ok(()));
+    }
+
+    // Form state (translator:get + syncProvider) -------------------------------------
+
+    #[test]
+    fn saved_translator_reports_a_key_only_when_its_binding_matches() {
+        let mut config = Config::default();
+        config.translator = saved("openrouter", "", Some("E1"), Some(key_binding("openrouter", OR_URL)));
+        assert!(saved_translator(&config).has_key);
+        config.translator.key_binding = Some(key_binding("openrouter", "https://other.example"));
+        assert!(!saved_translator(&config).has_key);
+        config.translator.api_key_enc = None;
+        config.translator.key_binding = Some(key_binding("openrouter", OR_URL));
+        assert!(!saved_translator(&config).has_key);
+    }
+
+    #[test]
+    fn switching_provider_fills_presets_or_the_saved_values() {
+        let mut config = Config::default();
+        config.translator =
+            saved("custom", "http://my.server/v1", Some("E"), Some(key_binding("custom", "http://my.server/v1")));
+        config.translator.model = "my-model".into();
+        let s = saved_translator(&config);
+        assert_eq!(form_for_provider("custom", &s), form("custom", "http://my.server/v1", "my-model", KeyInput::Untouched));
+        assert_eq!(form_for_provider("openrouter", &s), form("openrouter", OR_URL, "", KeyInput::Untouched));
+        assert_eq!(form_for_provider("lmstudio", &s), form("lmstudio", "http://localhost:1234/v1", "", KeyInput::Untouched));
+        assert_eq!(form_for_provider("anthropic", &s), form("anthropic", "", "claude-haiku-5-5", KeyInput::Untouched));
+        assert_eq!(form_for_provider("claudecode", &s), form("claudecode", "", "claude-haiku-5-5", KeyInput::Untouched));
+        assert_eq!(key_placeholder("custom", &s), "•••••• guardada (escribe para cambiarla)");
+        assert_eq!(key_placeholder("openrouter", &s), "sin clave");
+    }
+
+    // Which key Probar / Cargar modelos may use ----------------------------------------
+
+    #[test]
+    fn an_untouched_key_is_read_only_through_the_binding_check() {
+        let config = Config::default();
+        let calls = RefCell::new(Vec::new());
+        let read = |_: &Config, p: &str, u: &str| {
+            calls.borrow_mut().push((p.to_string(), u.to_string()));
+            Some("from-read".to_string())
+        };
+        let key = request_key(&config, &form("openrouter", " https://x.example/v1 ", "m", KeyInput::Untouched), &read);
+        assert_eq!(key.as_deref(), Some("from-read"));
+        assert_eq!(*calls.borrow(), vec![("openrouter".to_string(), "https://x.example/v1".to_string())]);
+    }
+
+    #[test]
+    fn a_typed_key_is_used_as_typed_and_claude_code_never_gets_one() {
+        let read = |_: &Config, _: &str, _: &str| -> Option<String> { panic!("must not read the saved key") };
+        let config = Config::default();
+        let typed = |s: &str| KeyInput::Typed(s.into());
+        assert_eq!(request_key(&config, &form("openrouter", "", "m", typed(" sk-1 ")), &read).as_deref(), Some("sk-1"));
+        assert_eq!(request_key(&config, &form("openrouter", "", "m", typed("  ")), &read), None);
+        assert_eq!(request_key(&config, &form("claudecode", "", "m", KeyInput::Untouched), &read), None);
+        assert_eq!(request_key(&config, &form("claudecode", "", "m", typed("k")), &read), None);
+    }
+
+    #[test]
+    fn with_the_real_reader_a_saved_key_never_reaches_another_server() {
+        let mut config = Config::default();
+        let enc = encrypt_api_key("sk-or-9").unwrap();
+        config.translator = saved("openrouter", "", Some(&enc), Some(key_binding("openrouter", OR_URL)));
+        let k = |p: &str, u: &str| request_key(&config, &form(p, u, "m", KeyInput::Untouched), &read_api_key);
+        assert_eq!(k("openrouter", OR_URL).as_deref(), Some("sk-or-9"));
+        assert_eq!(k("openrouter", "https://evil.example/api/v1"), None);
+        assert_eq!(k("custom", OR_URL), None);
+        assert_eq!(k("anthropic", ""), None);
+    }
+
+    // Probar / Cargar modelos -------------------------------------------------------------
+
+    fn t(text: &str) -> Translation {
+        Translation { text: text.into(), source: "en".into(), provider: None, fallback_reason: None }
+    }
+
+    struct FakeLlm {
+        reply: Result<String, String>,
+        models: Vec<String>,
+    }
+    impl Translator for FakeLlm {
+        fn translate(&self, text: &str, target: &str) -> Result<Translation, String> {
+            assert_eq!((text, target), (TEST_SAMPLE, "es"));
+            self.reply.clone().map(|s| t(&s))
+        }
+    }
+    impl ModelSource for FakeLlm {
+        fn list_models(&self) -> Result<Vec<String>, String> {
+            Ok(self.models.clone())
+        }
+    }
+
+    struct Google;
+    impl Translator for Google {
+        fn translate(&self, text: &str, target: &str) -> Result<Translation, String> {
+            assert_eq!((text, target), (TEST_SAMPLE, "es"));
+            Ok(t("LFM ZG necesito curar, susurra"))
+        }
+    }
+
+    type MakeLlm<'a> = &'a dyn Fn(&TranslatorSettings, Option<String>) -> Result<Box<dyn Llm>, String>;
+
+    #[test]
+    fn probe_translates_the_sample_with_google_or_the_llm() {
+        assert_eq!(TEST_SAMPLE, "LFM ZG need heal, pst");
+        let never: MakeLlm = &|_, _| panic!("no llm for google");
+        assert_eq!(
+            probe(&form("google", "", "", KeyInput::Untouched), None, &Google, never),
+            Ok("«LFM ZG need heal, pst» → «LFM ZG necesito curar, susurra»".to_string())
+        );
+        assert_eq!(probe(&form("openrouter", "", "", KeyInput::Untouched), None, &Google, never), Err("Elige un modelo".to_string()));
+
+        let seen = RefCell::new(None);
+        let make = |s: &TranslatorSettings, key: Option<String>| -> Result<Box<dyn Llm>, String> {
+            *seen.borrow_mut() = Some((s.provider.clone(), s.base_url.clone(), s.model.clone(), key));
+            Ok(Box::new(FakeLlm { reply: Ok("hola".into()), models: vec![] }))
+        };
+        let f = form("lmstudio", " http://localhost:1234/v1 ", " qwen ", KeyInput::Untouched);
+        assert_eq!(probe(&f, Some("k".into()), &Google, &make), Ok("«LFM ZG need heal, pst» → «hola»".to_string()));
+        assert_eq!(
+            *seen.borrow(),
+            Some(("lmstudio".into(), "http://localhost:1234/v1".into(), "qwen".into(), Some("k".into())))
+        );
+        let failing: MakeLlm = &|_, _| Err("Falta la URL del servidor".into());
+        assert_eq!(
+            probe(&form("custom", "", "m", KeyInput::Untouched), None, &Google, failing),
+            Err("Falta la URL del servidor".to_string())
+        );
+    }
+
+    #[test]
+    fn load_models_lists_the_server_models() {
+        let make: MakeLlm = &|_, _| Ok(Box::new(FakeLlm { reply: Err("x".into()), models: vec!["only".into()] }));
+        let models = load_models(&form("lmstudio", "", "", KeyInput::Untouched), None, make).unwrap();
+        assert_eq!(models, vec!["only".to_string()]);
+        assert_eq!(models_message(3), "3 modelos disponibles. Elige uno en la lista ▾ junto al campo Modelo.");
+    }
+
+    // Compose ------------------------------------------------------------------------------
+
+    struct Counting(AtomicUsize, Result<String, String>);
+    impl Translator for Counting {
+        fn translate(&self, text: &str, target: &str) -> Result<Translation, String> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            assert_eq!((text, target), ("hola a todos", "en"));
+            self.1.clone().map(|s| t(&s))
+        }
+    }
+
+    #[test]
+    fn compose_passes_spanish_through_without_translating() {
+        let tr = Counting(AtomicUsize::new(0), Ok("x".into()));
+        assert_eq!(translate_outgoing("  hola a todos ", "es", &tr), Ok("hola a todos".to_string()));
+        assert_eq!(tr.0.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn compose_translates_to_english_and_reports_errors() {
+        let tr = Counting(AtomicUsize::new(0), Ok("hello everyone".into()));
+        assert_eq!(translate_outgoing("hola a todos\n", "en", &tr), Ok("hello everyone".to_string()));
+        assert_eq!(tr.0.load(Ordering::SeqCst), 1);
+        let bad = Counting(AtomicUsize::new(0), Err("Google: HTTP 429".into()));
+        assert_eq!(translate_outgoing("hola a todos", "en", &bad), Err("Google: HTTP 429".to_string()));
+        assert_eq!(translate_outgoing("   ", "en", &bad), Err("Mensaje vacío".to_string()));
+        assert_eq!(bad.0.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn compose_messages_match_the_electron_overlay() {
+        assert_eq!(copied_message("hello"), "✓ Copiado: «hello». En WoW: Enter → Ctrl+V → Enter");
+        assert_eq!(failed_message("sin red"), "No se pudo traducir: sin red");
+    }
+}

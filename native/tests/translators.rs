@@ -789,3 +789,148 @@ fn live_claude_code() {
     println!("claude code: {res:?} in {:?}", start.elapsed());
     res.unwrap();
 }
+
+// ---------------------------------------------------------------- E5: redirects and process trees
+
+mod e5 {
+    use super::*;
+    use std::io::{BufRead, BufReader, Read as _, Write as _};
+    use std::net::TcpListener;
+    use wow_chat_translator::translators::claude_code::kill_tree_args;
+    use wow_chat_translator::translators::http::{max_redirects_for, UreqClient, DEFAULT_MAX_REDIRECTS};
+
+    /// A local server answering every request with `response`; counts requests and
+    /// records whether any carried an `x-api-key` header.
+    struct Server {
+        port: u16,
+        hits: Arc<AtomicUsize>,
+        saw_key: Arc<AtomicUsize>,
+    }
+
+    fn serve(response: impl Fn(u16) -> String + Send + 'static) -> Server {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let hits = Arc::new(AtomicUsize::new(0));
+        let saw_key = Arc::new(AtomicUsize::new(0));
+        let (h, k) = (hits.clone(), saw_key.clone());
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                h.fetch_add(1, Ordering::SeqCst);
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut length = 0usize;
+                loop {
+                    let mut line = String::new();
+                    if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
+                        break;
+                    }
+                    let lower = line.to_ascii_lowercase();
+                    if lower.starts_with("x-api-key:") {
+                        k.fetch_add(1, Ordering::SeqCst);
+                    }
+                    if let Some(v) = lower.strip_prefix("content-length:") {
+                        length = v.trim().parse().unwrap_or(0);
+                    }
+                }
+                let mut body = vec![0u8; length];
+                let _ = reader.read_exact(&mut body);
+                let _ = stream.write_all(response(port).as_bytes());
+            }
+        });
+        Server { port, hits, saw_key }
+    }
+
+    fn redirect_to(target: u16) -> Server {
+        serve(move |_| {
+            format!(
+                "HTTP/1.1 307 Temporary Redirect\r\nLocation: http://127.0.0.1:{target}/v1/messages\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            )
+        })
+    }
+
+    fn ok_server() -> Server {
+        serve(|_| "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok".to_string())
+    }
+
+    fn h(k: &str, v: &str) -> (String, String) {
+        (k.to_string(), v.to_string())
+    }
+
+    #[test]
+    fn requests_carrying_x_api_key_never_follow_redirects() {
+        assert_eq!(max_redirects_for(&[h("x-api-key", "sk-ant")]), 0);
+        assert_eq!(max_redirects_for(&[h("X-Api-Key", "sk-ant")]), 0);
+        // Everything else keeps ureq's default (ureq never forwards Authorization).
+        assert_eq!(max_redirects_for(&[h("Authorization", "Bearer k")]), DEFAULT_MAX_REDIRECTS);
+        assert_eq!(max_redirects_for(&[]), DEFAULT_MAX_REDIRECTS);
+    }
+
+    #[test]
+    fn anthropic_requests_are_configured_without_redirects() {
+        let http = FakeHttp::json(200, serde_json::json!({ "content": [{ "type": "text", "text": "hola" }] }));
+        let tr = AnthropicTranslator::new(http.clone(), "sk-ant-1", ANTHROPIC_DEFAULT_MODEL);
+        let _ = tr.translate("hi", "es");
+        let _ = tr.list_models();
+        let calls = http.calls();
+        assert!(calls.len() >= 2);
+        for call in calls {
+            assert_eq!(max_redirects_for(&call.headers), 0, "{}", call.url);
+        }
+    }
+
+    #[test]
+    fn ureq_client_does_not_send_x_api_key_to_a_redirect_target() {
+        let other = ok_server();
+        let first = redirect_to(other.port);
+        let url = format!("http://127.0.0.1:{}/v1/messages", first.port);
+        let res = UreqClient::new()
+            .post(&url, &[h("x-api-key", "sk-ant-secret"), h("content-type", "application/json")], "{}", Duration::from_secs(5))
+            .unwrap();
+        assert_eq!(res.status, 307);
+        assert_eq!(first.hits.load(Ordering::SeqCst), 1);
+        assert_eq!(first.saw_key.load(Ordering::SeqCst), 1);
+        assert_eq!(other.hits.load(Ordering::SeqCst), 0, "the redirect was followed");
+        assert_eq!(other.saw_key.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn ureq_client_still_follows_redirects_without_x_api_key() {
+        let other = ok_server();
+        let first = redirect_to(other.port);
+        let url = format!("http://127.0.0.1:{}/v1/messages", first.port);
+        let res = UreqClient::new().get(&url, &[h("Authorization", "Bearer k")], Duration::from_secs(5)).unwrap();
+        assert_eq!(res, HttpResponse { status: 200, body: "ok".into() });
+        assert_eq!(other.hits.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn kill_tree_args_target_the_whole_tree_by_pid() {
+        assert_eq!(kill_tree_args(4321), vec!["/PID", "4321", "/T", "/F"]);
+    }
+
+    /// A `.cmd` shim (like npm's `claude.cmd`) whose grandchild keeps appending to a
+    /// file: after the timeout kill the file must stop growing. The grandchild stops by
+    /// itself after ~12 s, so a failing run leaves nothing behind for long.
+    #[cfg(windows)]
+    #[test]
+    fn a_timed_out_cmd_shim_has_its_whole_process_tree_killed() {
+        let dir = std::env::temp_dir().join(format!("wct-e5-kill-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let ticks = dir.join("ticks.txt");
+        let shim = dir.join("shim.cmd");
+        std::fs::write(
+            &shim,
+            "@echo off\r\npowershell -NoProfile -Command \"for($i=0;$i -lt 60;$i++){Add-Content -LiteralPath '%~dp0ticks.txt' -Value x; Start-Sleep -Milliseconds 200}\"\r\n",
+        )
+        .unwrap();
+        let res = ProcessRunner.run(&shim, &[], "", Duration::from_secs(3));
+        assert!(res.is_err(), "{res:?}");
+        std::thread::sleep(Duration::from_millis(1000));
+        let before = std::fs::metadata(&ticks).map(|m| m.len()).unwrap_or(0);
+        std::thread::sleep(Duration::from_millis(2000));
+        let after = std::fs::metadata(&ticks).map(|m| m.len()).unwrap_or(0);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(before > 0, "the grandchild never started");
+        assert_eq!(before, after, "the grandchild kept running after the timeout");
+    }
+}

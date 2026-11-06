@@ -145,3 +145,69 @@ pub fn data_dir() -> PathBuf {
     let base = std::env::var_os("APPDATA").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
     base.join("wow-chat-translator-native")
 }
+
+/// Copies `text` to the clipboard as Unicode text (the overlay window owns it).
+pub fn copy_to_clipboard(owner: Hwnd, text: &str) -> Result<(), String> {
+    use windows::Win32::Foundation::{GlobalFree, HANDLE, HGLOBAL};
+    use windows::Win32::System::DataExchange::{CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData};
+    use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
+    const CF_UNICODETEXT: u32 = 13;
+
+    let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+    // Another program may hold the clipboard for a moment.
+    let mut opened = false;
+    for _ in 0..10 {
+        if unsafe { OpenClipboard(owner.get()) }.is_ok() {
+            opened = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    if !opened {
+        return Err("el portapapeles está ocupado".into());
+    }
+    let result = unsafe {
+        (|| -> Result<(), String> {
+            EmptyClipboard().map_err(|e| e.message())?;
+            let mem: HGLOBAL = GlobalAlloc(GMEM_MOVEABLE, wide.len() * 2).map_err(|e| e.message())?;
+            let ptr = GlobalLock(mem) as *mut u16;
+            if ptr.is_null() {
+                let _ = GlobalFree(Some(mem));
+                return Err("sin memoria para el portapapeles".into());
+            }
+            // SAFETY: `mem` holds `wide.len()` u16 values and is locked.
+            std::ptr::copy_nonoverlapping(wide.as_ptr(), ptr, wide.len());
+            let _ = GlobalUnlock(mem);
+            // On success the clipboard owns the memory.
+            if let Err(e) = SetClipboardData(CF_UNICODETEXT, Some(HANDLE(mem.0))) {
+                let _ = GlobalFree(Some(mem));
+                return Err(e.message());
+            }
+            Ok(())
+        })()
+    };
+    unsafe {
+        let _ = CloseClipboard();
+    }
+    result
+}
+
+/// Brings the WoW window to the front (restoring it if minimized). It only changes the
+/// active window and never sends keystrokes. Windows allows it while this app has the
+/// focus (the user just pressed Enter or Esc in the compose box). True when WoW is now
+/// the foreground window.
+pub fn focus_game() -> bool {
+    use windows::core::w;
+    use windows::Win32::UI::WindowsAndMessaging::{FindWindowW, IsIconic, ShowWindow, SW_RESTORE};
+    unsafe {
+        let Ok(game) = FindWindowW(None, w!("World of Warcraft")) else { return false };
+        if game.is_invalid() {
+            return false;
+        }
+        if IsIconic(game).as_bool() {
+            let _ = ShowWindow(game, SW_RESTORE);
+        }
+        let _ = SetForegroundWindow(game);
+        GetForegroundWindow() == game
+    }
+}
