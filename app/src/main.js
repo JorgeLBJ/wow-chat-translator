@@ -299,7 +299,10 @@ function createOverlay() {
     minWidth: 320,
     minHeight: 180,
     frame: false,
-    transparent: true,
+    // Opaque on purpose: Windows can stop repainting a transparent window that sits
+    // over a game until it is moved (messages arrived but were not drawn).
+    transparent: false,
+    backgroundColor: "#0e1016",
     resizable: true,
     show: false,
     title: "WoW Chat Translator",
