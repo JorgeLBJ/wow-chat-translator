@@ -190,13 +190,23 @@ function dockOverPanel() {
   if (!overlay || !r) return status("Primero calibra la zona del panel");
   const display = screen.getDisplayNearestPoint({ x: r.x, y: r.y });
   const sf = display.scaleFactor;
-  restoreBounds = null;
-  send("win:maximized", false);
+  if (restoreBounds) {
+    overlay.setBounds(restoreBounds);
+    restoreBounds = null;
+    send("win:maximized", false);
+  }
+  // Keep the user's size; only grow if the panel is larger. Anchor to the panel's
+  // bottom-left corner so the window extends upwards like the game chat does.
+  const panel = { x: r.x / sf, y: r.y / sf, w: r.w / sf, h: r.h / sf };
+  const current = overlay.getBounds();
+  const width = Math.max(current.width, Math.ceil(panel.w));
+  const height = Math.max(current.height, Math.ceil(panel.h));
+  const wa = display.workArea;
   overlay.setBounds({
-    x: Math.round(r.x / sf),
-    y: Math.round(r.y / sf),
-    width: Math.max(320, Math.round(r.w / sf)),
-    height: Math.max(180, Math.round(r.h / sf)),
+    x: Math.round(Math.min(Math.max(panel.x, wa.x), wa.x + wa.width - width)),
+    y: Math.round(Math.max(panel.y + panel.h - height, wa.y)),
+    width,
+    height,
   });
   saveConfig({ overlayBounds: overlay.getBounds() });
 }
