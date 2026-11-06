@@ -18,6 +18,7 @@ import { keyBinding } from "./core/key-binding.js";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const STRIP_WORKER = path.join(here, "..", "ocr", "strip-worker.ps1");
 const FOCUS_WOW = path.join(here, "..", "ocr", "focus-wow.ps1");
+const APP_ICON = path.join(here, "..", "assets", "icon.ico");
 const DETECT_PANEL = path.join(here, "..", "ocr", "detect-panel.ps1");
 const TARGET_LANG = "es";
 const GAME_EXE = "Wow.exe";
@@ -292,6 +293,7 @@ function createOverlay() {
     resizable: true,
     show: false,
     title: "WoW Chat Translator",
+    icon: APP_ICON,
     // Keep rendering while hidden: otherwise the window can reappear showing stale
     // content until it is moved (seen after a /reload loading screen).
     webPreferences: { preload: path.join(here, "preload.cjs"), backgroundThrottling: false },
@@ -517,7 +519,7 @@ function updateTray() {
 }
 
 function createTray() {
-  const icon = nativeImage.createFromPath(path.join(here, "..", "assets", "tray-32.png")).resize({ width: 16, height: 16 });
+  const icon = nativeImage.createFromPath(path.join(here, "..", "assets", "icon-32.png")).resize({ width: 16, height: 16 });
   tray = new Tray(icon);
   tray.on("click", showOverlay);
   updateTray();
@@ -651,6 +653,7 @@ function openSettings() {
     show: false,
     backgroundColor: "#0f141d",
     title: "Ajustes · WoW Chat Translator",
+    icon: APP_ICON,
     webPreferences: { preload: path.join(here, "preload.cjs") },
   });
   settingsWin.setAlwaysOnTop(true, "screen-saver"); // above the game, like the overlay
@@ -691,6 +694,8 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.on("second-instance", showOverlay);
+  // Groups the windows under the app's own taskbar entry and icon instead of Electron's.
+  app.setAppUserModelId("WoW Chat Translator");
   app.whenReady().then(() => {
     config = loadConfig();
     translator = buildTranslator();

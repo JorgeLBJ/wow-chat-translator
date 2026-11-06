@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <!-- WoW Chat Translator icon: a gold chat bubble with two-way translation arrows. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#25355c"/>
+      <stop offset="1" stop-color="#0e1424"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffd877"/>
+      <stop offset="1" stop-color="#d99a2b"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="52" fill="url(#bg)"/>
+  <rect x="8" y="8" width="240" height="240" rx="52" fill="none" stroke="#3b82f6" stroke-opacity=".55" stroke-width="6"/>
+  <!-- bubble -->
+  <path d="M64 52 H192 a30 30 0 0 1 30 30 V148 a30 30 0 0 1 -30 30 H120 L78 214 L86 178 H64 a30 30 0 0 1 -30 -30 V82 a30 30 0 0 1 30 -30 Z"
+        fill="url(#gold)" stroke="#7a4f0e" stroke-width="6" stroke-linejoin="round"/>
+  <!-- two-way arrows -->
+  <g fill="none" stroke="#1b2440" stroke-width="15" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M78 96 H170"/>
+    <path d="M150 76 L172 96 L150 116"/>
+    <path d="M178 136 H86"/>
+    <path d="M106 116 L84 136 L106 156"/>
+  </g>
+</svg>
