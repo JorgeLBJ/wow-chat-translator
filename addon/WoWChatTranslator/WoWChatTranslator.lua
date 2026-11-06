@@ -40,13 +40,16 @@ local EVENT_CHANNEL = {
 local db
 
 -- Text cleanup ----------------------------------------------------------------
--- Removes color codes, textures and raid icons. Links keep their "[Name]" text; the
--- app uses the brackets to keep link names untranslated.
+-- Removes color codes, textures and raid icons. Real links (|H...|h[Name]|h) are
+-- wrapped in \2 ... \3, characters players cannot type, so the app keeps only real
+-- link names untranslated; brackets a player types by hand are ordinary text.
+local LINK_OPEN, LINK_CLOSE = "\2", "\3"
 local function sanitize(text)
+  text = text:gsub("[\2\3]", "")
   text = text:gsub("|c%x%x%x%x%x%x%x%x", "")
   text = text:gsub("|cn[^:]*:", "") -- named colors, e.g. item quality "|cnIQ1:"
   text = text:gsub("|r", "")
-  text = text:gsub("|H.-|h(.-)|h", "%1")
+  text = text:gsub("|H.-|h(.-)|h", LINK_OPEN .. "%1" .. LINK_CLOSE)
   text = text:gsub("|T.-|t", "")
   text = text:gsub("|A.-|a", "")
   text = text:gsub("{.-}", "")

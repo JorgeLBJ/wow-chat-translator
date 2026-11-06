@@ -2,7 +2,7 @@
 // is paused. Paused (and failed) messages are kept so the user can translate any one
 // of them on demand by clicking it.
 
-import { onlyLinks, protectLinks, restoreLinks, tidyLinks } from "./links.js";
+import { onlyLinks, protectLinks, protectMarkedLinks, restoreLinks, stripLinkMarkers, tidyLinks } from "./links.js";
 import { fixOcrWords } from "./ocr-fixes.js";
 import { looksSpanish } from "./language.js";
 import { channelTab } from "./channels.js";
@@ -45,9 +45,10 @@ export function createMessagePipeline({ getTranslator, send, isPaused, target = 
   return {
     addMessages(messages) {
       for (const msg of messages) {
-        const original = ocrFixes ? fixOcrWords(tidyLinks(msg.text)) : msg.text;
         // Links ([Item], [Spell]...) are never translated: mask them, restore after.
-        const { text: masked, links } = protectLinks(original);
+        // OCR text: any [..] is taken as a link. Strip text: only links the addon marked.
+        const original = ocrFixes ? fixOcrWords(tidyLinks(msg.text)) : stripLinkMarkers(msg.text);
+        const { text: masked, links } = ocrFixes ? protectLinks(original) : protectMarkedLinks(msg.text);
         const item = {
           id: nextId++,
           time: now(),

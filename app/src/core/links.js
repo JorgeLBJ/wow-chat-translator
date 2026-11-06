@@ -33,6 +33,24 @@ export function protectLinks(text) {
   return { text: masked, links };
 }
 
+// Pixel-strip text: the addon wraps real WoW links (|H...|h[Name]|h) in \x02 ... \x03,
+// characters players cannot type. Only those are kept untranslated; brackets a player
+// typed by hand are ordinary text.
+const MARKED_LINK = /\x02([^\x02\x03]*)\x03/g;
+
+export function stripLinkMarkers(text) {
+  return text.replace(/[\x02\x03]/g, "");
+}
+
+export function protectMarkedLinks(text) {
+  const links = [];
+  const masked = text.replace(MARKED_LINK, (_m, name) => {
+    links.push(name);
+    return `[${links.length - 1}]`;
+  });
+  return { text: stripLinkMarkers(masked), links };
+}
+
 export function restoreLinks(text, links) {
   return text.replace(PLACEHOLDER, (m, i) => links[Number(i)] ?? m);
 }

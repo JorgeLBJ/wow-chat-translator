@@ -634,3 +634,27 @@ describe("message pipeline with exact (strip) text", () => {
     expect(sent.filter(([c]) => c === "chat:add").map(([, d]) => d.original)).toEqual(["101", "i < 3 > you"]);
   });
 });
+
+describe("message pipeline: only real links are kept untranslated (strip)", () => {
+  it("masks links marked by the addon and translates brackets typed by players", async () => {
+    const sent = [];
+    const tr = { translate: vi.fn(async (t) => ({ text: `ES(${t})`, source: "en" })) };
+    const p = createMessagePipeline({ getTranslator: () => tr, send: (c, d) => sent.push([c, d]), isPaused: () => false, ocrFixes: false });
+    p.addMessages([{ channel: "Trade", cls: "MAGE", player: "Ana", text: "wts \u0002[Arcanite Bar]\u0003 and [cheap stuff] pst" }]);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(tr.translate.mock.calls[0][0]).toBe("wts [0] and [cheap stuff] pst");
+    const add = sent.find(([c]) => c === "chat:add")[1];
+    expect(add.original).toBe("wts [Arcanite Bar] and [cheap stuff] pst");
+    const upd = sent.find(([c]) => c === "chat:update")[1];
+    expect(upd.translated).toBe("ES(wts [Arcanite Bar] and [cheap stuff] pst)");
+  });
+
+  it("treats a message made only of real links as nothing to translate", async () => {
+    const sent = [];
+    const tr = { translate: vi.fn() };
+    const p = createMessagePipeline({ getTranslator: () => tr, send: (c, d) => sent.push([c, d]), isPaused: () => false, ocrFixes: false });
+    p.addMessages([{ channel: "Trade", cls: null, player: "B", text: "\u0002[Linen Cloth]\u0003" }]);
+    expect(tr.translate).not.toHaveBeenCalled();
+    expect(sent[0][1]).toMatchObject({ original: "[Linen Cloth]", status: "done" });
+  });
+});
