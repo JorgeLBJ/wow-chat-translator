@@ -29,15 +29,17 @@ Branch: `main` (new repo) · Delivery: `ask-on-risk` · Test runner: Vitest (app
 
 | ID | Specs | Task | Route | Status | Commit |
 |----|-------|------|-------|--------|--------|
-| T1 | S4, S6 | Addon `WoWChatTranslator`: listen to chat events, render OCR panel, movable, `/wct` show/hide | inline | done (in-game + OCR verified) | |
-| T2 | S4, S5 | App skeleton (Electron): transparent always-on-top overlay window, config file with panel region | inline | written, awaiting first run | |
-| T3 | S4, S5 | Region capture + change detection + Windows OCR; calibration tool for panel region | inline | worker verified on live screen; calibration awaiting first run | |
-| T4 | S4 | Line parser `Channel|Player|Message` + dedupe of already-processed lines (unit tests) | inline | done, tests GREEN | |
-| T5 | S1, S5 | Language detection, translation provider adapter, cache (unit tests) | inline | done, tests GREEN + live check | |
-| T6 | S1, S2 | Overlay UI: channel colors, language badge, hover original, global toggle `Ctrl+Shift+T` | inline | written, awaiting first run | |
-| T7 | S3 | Compose box: `[EN|ES]`, preview, copy to clipboard | inline | written in v2 (Enter = translate+copy, Ctrl+Shift+Enter focuses box); awaiting user check | |
-| T9 | S8 | UI v2 + addon class token | inline | done: 34/34 tests GREEN, UI rendered offscreen and inspected; awaiting user check in game | |
-| T8 | S7 | Experiment: overlay excluded from capture | inline | done: verified, overlay always content-protected + 📌 dock button | |
+| T1 | S4, S6 | Addon `WoWChatTranslator`: chat events -> OCR panel (`NNN Channel CLASS Player: msg`, links as `< Name >`), movable/resizable, `/wct` | inline | done; in-game verified | cd7b80d, 669dd37 |
+| T2 | S4, S5 | Electron app: overlay window, config, tray, start with Windows, follows Wow.exe | inline | done; game start/exit verified | b1623c8 |
+| T3 | S4, S5 | Capture + change detection + Windows OCR; calibration; WoW-window capture (PrintWindow) | inline | done; live verified through the docked overlay | 514e903 |
+| T4 | S4 | Parser + dedupe (class token, OCR-tolerant seq, glued-line dedupe) | inline | done, tests GREEN | c078508 |
+| T5 | S1, S5 | Translators: Google, OpenRouter/LM Studio/custom, Anthropic API, Claude Code; cache; Google fallback; links kept; OCR fixes | inline | done; Claude Code live verified; Anthropic API not live-tested (no key) | c709b57, eca58af |
+| T6 | S1, S2 | Overlay UI v2: class colors, tabs, toggle, hover original, settings window | inline | done | 3150699 |
+| T7 | S3 | Compose box `[EN|ES]`, preview, clipboard, Ctrl+Shift+Enter | inline | written; focus return to WoW after Enter unverified | cd7b80d |
+| T8 | S7 | Overlay excluded from capture / dock over panel | inline | done; capture-exclusion unreliable over DirectX, replaced by WoW-window capture | 6c8cf7f, 514e903 |
+| T9 | S8 | UI v2 + addon class token | inline | done | cd7b80d |
+
+Open: packaging (exclude @anthropic-ai/claude-agent-sdk-<platform> from installer), distribution/open-source, Rust/Tauri migration decision (user: after features), Engram mirror pending (project not registered in Engram).
 
 ## Log
 
