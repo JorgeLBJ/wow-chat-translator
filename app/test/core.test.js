@@ -11,6 +11,8 @@ import { createOpenAICompatibleTranslator, parseLlmReply } from "../src/core/tra
 import { createFallbackTranslator } from "../src/core/translators/fallback.js";
 import { keyBinding } from "../src/core/key-binding.js";
 import { protectLinks, restoreLinks, tidyLinks, onlyLinks } from "../src/core/links.js";
+import { createAnthropicTranslator } from "../src/core/translators/anthropic.js";
+import { createClaudeCodeTranslator } from "../src/core/translators/claude-code.js";
 
 describe("parseLines", () => {
   it("parses OCR lines in the format NNN Channel Player Name: message", () => {
@@ -362,5 +364,84 @@ describe("openai-compatible prompt", () => {
 describe("tidyLinks with leftover color codes", () => {
   it("removes named-color leftovers like /cnlQ1 that an old addon version leaks", () => {
     expect(tidyLinks("keep them? /cnlQ1 CWAL /cnIQ1: KWYJIBO")).toBe("keep them? CWAL KWYJIBO");
+  });
+});
+
+describe("anthropic translator", () => {
+  const fakeClient = (response) => {
+    const create = vi.fn(async () => response);
+    return { create, client: { messages: { create }, models: { list: async function* () { yield { id: "claude-haiku-5-5" }; yield { id: "claude-sonnet-5-5" }; } } } };
+  };
+  const ok = (text) => ({ stop_reason: "end_turn", content: [{ type: "thinking", thinking: "" }, { type: "text", text }] });
+
+  it("sends system prompt, model and low effort, and parses the reply", async () => {
+    const { create, client } = fakeClient(ok("LANG: en\nTEXT: Busco más para ZG"));
+    const tr = createAnthropicTranslator({ model: "claude-haiku-5-5", client });
+    expect(await tr.translate("LFM ZG", "es")).toEqual({ source: "en", text: "Busco más para ZG" });
+    const req = create.mock.calls[0][0];
+    expect(req.model).toBe("claude-haiku-5-5");
+    expect(req.system).toContain("Spanish");
+    expect(req.messages).toEqual([{ role: "user", content: "LFM ZG" }]);
+    expect(req.output_config).toEqual({ effort: "low" });
+    expect(req.temperature).toBeUndefined();
+  });
+
+  it("does not send effort to older models that reject it", async () => {
+    const { create, client } = fakeClient(ok("LANG: en\nTEXT: hola"));
+    await createAnthropicTranslator({ model: "claude-haiku-4-5", client }).translate("hi", "es");
+    expect(create.mock.calls[0][0].output_config).toBeUndefined();
+  });
+
+  it("throws on refusals so the Google fallback takes over", async () => {
+    const { client } = fakeClient({ stop_reason: "refusal", content: [] });
+    await expect(createAnthropicTranslator({ model: "claude-haiku-5-5", client }).translate("x", "es")).rejects.toThrow();
+  });
+
+  it("lists models", async () => {
+    const { client } = fakeClient(ok(""));
+    expect(await createAnthropicTranslator({ model: "m", client }).listModels()).toEqual(["claude-haiku-5-5", "claude-sonnet-5-5"]);
+  });
+});
+
+describe("claude code translator", () => {
+  const resultMsg = (extra) => ({ type: "result", subtype: "success", is_error: false, result: "LANG: en\nTEXT: hola", ...extra });
+
+  it("runs a tool-less, settings-less single-turn query with the chosen model", async () => {
+    const queryFn = vi.fn(async function* () { yield { type: "system" }; yield resultMsg(); });
+    const tr = createClaudeCodeTranslator({ model: "claude-haiku-5-5", queryFn });
+    expect(await tr.translate("hi", "es")).toEqual({ source: "en", text: "hola" });
+    const { prompt, options } = queryFn.mock.calls[0][0];
+    expect(prompt).toBe("hi");
+    expect(options).toMatchObject({ model: "claude-haiku-5-5", tools: [], settingSources: [], maxTurns: 1, strictMcpConfig: true });
+    expect(options.systemPrompt).toContain("Spanish");
+  });
+
+  it("throws when Claude Code reports an error", async () => {
+    const queryFn = async function* () { yield resultMsg({ is_error: true, result: "rate limited" }); };
+    await expect(createClaudeCodeTranslator({ model: "m", queryFn }).translate("hi", "es")).rejects.toThrow("rate limited");
+    const noResult = async function* () { yield { type: "result", subtype: "error_max_turns", is_error: true }; };
+    await expect(createClaudeCodeTranslator({ model: "m", queryFn: noResult }).translate("hi", "es")).rejects.toThrow();
+  });
+
+  it("runs at most `concurrency` queries at once", async () => {
+    let running = 0;
+    let peak = 0;
+    const queryFn = async function* () {
+      running++;
+      peak = Math.max(peak, running);
+      await new Promise((r) => setTimeout(r, 20));
+      running--;
+      yield resultMsg();
+    };
+    const tr = createClaudeCodeTranslator({ model: "m", queryFn, concurrency: 2 });
+    await Promise.all([1, 2, 3, 4, 5].map(() => tr.translate("hi", "es")));
+    expect(peak).toBe(2);
+  });
+});
+
+describe("claude code translator timeout", () => {
+  it("rejects when Claude Code does not answer in time, so the fallback can run", async () => {
+    const queryFn = async function* () { await new Promise((r) => setTimeout(r, 200)); yield { type: "result", subtype: "success", is_error: false, result: "x" }; };
+    await expect(createClaudeCodeTranslator({ model: "m", queryFn, timeoutMs: 30 }).translate("hi", "es")).rejects.toThrow(/tiempo|time/i);
   });
 });

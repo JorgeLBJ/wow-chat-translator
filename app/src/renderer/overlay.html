@@ -104,7 +104,7 @@
   .actions { display: flex; gap: 6px; justify-content: flex-end; margin-top: 12px; }
   #t-result { font-size: 11.5px; margin-top: 8px; min-height: 1em; word-wrap: break-word; }
   #t-result.ok { color: #86efac; } #t-result.err { color: #fca5a5; }
-  .llm-only[hidden], .pane[hidden] { display: none; }
+  .llm-only[hidden], .pane[hidden], #t-url-row[hidden], #t-key-row[hidden] { display: none; }
   .sheet-head { display: flex; align-items: center; justify-content: space-between; }
   .sheet-head h3 { margin: 0; }
   .stabs { display: flex; gap: 2px; margin: 8px 0 6px; border-bottom: 1px solid rgba(255,255,255,.08); }
@@ -185,13 +185,19 @@
           <option value="google">Google (gratis, sin configuración)</option>
           <option value="openrouter">OpenRouter (LLM en la nube, con clave)</option>
           <option value="lmstudio">LM Studio (LLM local)</option>
+          <option value="anthropic">Anthropic / Claude (clave API, créditos de tu plan)</option>
+          <option value="claudecode">Claude Code (tu suscripción de Claude)</option>
           <option value="custom">Otro servidor compatible con OpenAI</option>
         </select>
         <div class="llm-only" id="t-llm">
-          <label for="t-url">URL del servidor</label>
-          <input id="t-url" spellcheck="false" autocomplete="off">
-          <label for="t-key">Clave API</label>
-          <input id="t-key" type="password" spellcheck="false" autocomplete="off">
+          <div id="t-url-row">
+            <label for="t-url">URL del servidor</label>
+            <input id="t-url" spellcheck="false" autocomplete="off">
+          </div>
+          <div id="t-key-row">
+            <label for="t-key">Clave API</label>
+            <input id="t-key" type="password" spellcheck="false" autocomplete="off">
+          </div>
           <div class="hint" id="t-key-hint"></div>
           <label for="t-model">Modelo</label>
           <div class="inline">

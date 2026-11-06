@@ -284,11 +284,18 @@ window.wct.getPrefs().then((p) => {
 // Translator settings ---------------------------------------------------------
 
 const PRESET_URLS = { openrouter: "https://openrouter.ai/api/v1", lmstudio: "http://localhost:1234/v1", custom: "" };
+const DEFAULT_MODELS = { anthropic: "claude-haiku-5-5", claudecode: "claude-haiku-5-5" };
 const KEY_HINTS = {
   openrouter: "Créala en openrouter.ai → Keys.",
   lmstudio: "No hace falta para LM Studio. Abre LM Studio → Developer → Start Server y carga un modelo.",
   custom: "Solo si tu servidor la pide.",
+  anthropic:
+    "Créala en console.anthropic.com → API Keys. Si esa organización está vinculada a tu plan Max, usa sus créditos mensuales.",
+  claudecode:
+    "Sin clave: usa tu sesión de Claude Code (claude auth login) y el cupo de tu plan, el mismo que usas para programar. Tarda unos 3-4 s por mensaje.",
 };
+const HIDE_URL = new Set(["anthropic", "claudecode"]);
+const HIDE_KEY = new Set(["claudecode"]);
 const settingsBox = $("settings");
 let savedTranslator = null;
 let keyTouched = false;
@@ -313,9 +320,11 @@ function showResult(text, kind) {
 function syncProvider() {
   const p = currentProvider();
   $("t-llm").hidden = p === "google";
+  $("t-url-row").hidden = HIDE_URL.has(p);
+  $("t-key-row").hidden = HIDE_KEY.has(p);
   const sameProvider = savedTranslator && savedTranslator.provider === p;
   $("t-url").value = sameProvider && savedTranslator.baseUrl ? savedTranslator.baseUrl : PRESET_URLS[p] ?? "";
-  $("t-model").value = sameProvider ? savedTranslator.model : "";
+  $("t-model").value = sameProvider && savedTranslator.model ? savedTranslator.model : DEFAULT_MODELS[p] ?? "";
   keyTouched = false;
   $("t-key").value = "";
   $("t-key").placeholder = sameProvider && savedTranslator.hasKey ? "•••••• guardada (escribe para cambiarla)" : "sin clave";

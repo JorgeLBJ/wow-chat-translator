@@ -14,6 +14,8 @@ import { createGoogleTranslator } from "./core/translators/google.js";
 import { createCachedTranslator } from "./core/cache.js";
 import { createOpenAICompatibleTranslator } from "./core/translators/openai-compatible.js";
 import { createFallbackTranslator } from "./core/translators/fallback.js";
+import { ANTHROPIC_DEFAULT_MODEL, createAnthropicTranslator } from "./core/translators/anthropic.js";
+import { CLAUDE_CODE_MODELS, createClaudeCodeTranslator } from "./core/translators/claude-code.js";
 import { keyBinding } from "./core/key-binding.js";
 import { onlyLinks, protectLinks, restoreLinks, tidyLinks } from "./core/links.js";
 
@@ -73,12 +75,16 @@ const PROVIDERS = {
   google: { label: "Google", baseUrl: "" },
   openrouter: { label: "OpenRouter", baseUrl: "https://openrouter.ai/api/v1" },
   lmstudio: { label: "LM Studio", baseUrl: "http://localhost:1234/v1" },
+  anthropic: { label: "Anthropic", baseUrl: "https://api.anthropic.com" },
+  claudecode: { label: "Claude Code", baseUrl: "" },
   custom: { label: "Personalizado", baseUrl: "" },
 };
 
 const translatorSettings = () => ({ provider: "google", baseUrl: "", model: "", ...config.translator });
 
-const effectiveUrl = (provider, baseUrl) => baseUrl || PROVIDERS[provider]?.baseUrl || "";
+// Anthropic always uses its own endpoint, whatever URL the form holds.
+const effectiveUrl = (provider, baseUrl) =>
+  provider === "anthropic" ? PROVIDERS.anthropic.baseUrl : baseUrl || PROVIDERS[provider]?.baseUrl || "";
 
 // The saved key is bound to the provider + server it was saved for and is only
 // returned for that same pair, so it can never be sent to a different server.
@@ -95,6 +101,13 @@ function readApiKey(provider, baseUrl) {
 }
 
 function llmFor(settings, apiKey) {
+  if (settings.provider === "anthropic") {
+    if (!apiKey) throw new Error("Falta la clave API de Anthropic");
+    return createAnthropicTranslator({ apiKey, model: settings.model || ANTHROPIC_DEFAULT_MODEL });
+  }
+  if (settings.provider === "claudecode") {
+    return createClaudeCodeTranslator({ model: settings.model || CLAUDE_CODE_MODELS[0] });
+  }
   const baseUrl = effectiveUrl(settings.provider, settings.baseUrl);
   if (!baseUrl) throw new Error("Falta la URL del servidor");
   return createOpenAICompatibleTranslator({ baseUrl, apiKey, model: settings.model });
@@ -103,12 +116,28 @@ function llmFor(settings, apiKey) {
 function buildTranslator() {
   const s = translatorSettings();
   if (s.provider === "google" || !s.model) {
-    return createCachedTranslator({ translate: async (t, l) => ({ ...(await google.translate(t, l)), provider: "Google" }) });
+    translatorIssue = "";
+    return googleOnly();
   }
   const label = PROVIDERS[s.provider]?.label ?? "LLM";
+  let llm;
+  try {
+    llm = llmFor(s, readApiKey(s.provider, s.baseUrl));
+  } catch (err) {
+    // Never let a bad translator setting (missing or unreadable key...) stop the
+    // app from starting: translate with Google and say why.
+    translatorIssue = `${label}: ${err.message}. Se usa Google.`;
+    return googleOnly();
+  }
+  translatorIssue = "";
   return createCachedTranslator(
-    createFallbackTranslator({ name: label, translator: llmFor(s, readApiKey(s.provider, s.baseUrl)) }, { name: "Google", translator: google }),
+    createFallbackTranslator({ name: label, translator: llm }, { name: "Google", translator: google }),
   );
+}
+
+let translatorIssue = "";
+function googleOnly() {
+  return createCachedTranslator({ translate: async (t, l) => ({ ...(await google.translate(t, l)), provider: "Google" }) });
 }
 
 let translator = null;
@@ -525,8 +554,12 @@ ipcMain.handle("translator:set", (_e, { provider, baseUrl, model, apiKey }) => {
     next.apiKeyEnc = safeStorage.encryptString(String(apiKey).trim()).toString("base64");
     next.keyBinding = binding;
   }
+  if (provider === "anthropic" && !next.apiKeyEnc) {
+    return { ok: false, error: "Pega tu clave API de Anthropic antes de guardar" };
+  }
   saveConfig({ translator: next });
   translator = buildTranslator();
+  if (translatorIssue) status(translatorIssue);
   send("translator:changed", providerLabel());
   return { ok: true, label: providerLabel() };
 });
