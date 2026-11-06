@@ -7,7 +7,9 @@ import { fixOcrWords } from "./ocr-fixes.js";
 import { looksSpanish } from "./language.js";
 import { channelTab } from "./channels.js";
 
-export function createMessagePipeline({ getTranslator, send, isPaused, target = "es", now = Date.now, keep = 300 }) {
+// ocrFixes: text read with OCR needs link tidying and misread fixes (101 -> lol);
+// text decoded from the pixel strip is exact and must be kept as is.
+export function createMessagePipeline({ getTranslator, send, isPaused, target = "es", now = Date.now, keep = 300, ocrFixes = true }) {
   let nextId = 1;
   const pending = new Map(); // id -> { original, masked, links }: not translated yet
 
@@ -43,7 +45,7 @@ export function createMessagePipeline({ getTranslator, send, isPaused, target = 
   return {
     addMessages(messages) {
       for (const msg of messages) {
-        const original = fixOcrWords(tidyLinks(msg.text));
+        const original = ocrFixes ? fixOcrWords(tidyLinks(msg.text)) : msg.text;
         // Links ([Item], [Spell]...) are never translated: mask them, restore after.
         const { text: masked, links } = protectLinks(original);
         const item = {

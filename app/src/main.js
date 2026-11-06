@@ -4,11 +4,9 @@ import { createInterface } from "node:readline";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseLines } from "./core/parser.js";
 import { createMessagePipeline } from "./core/pipeline.js";
-import { createTracker } from "./core/tracker.js";
+import { findStrip } from "./core/strip-reader.js";
 import { createGameWatcher } from "./core/game-watcher.js";
-import { createPresence } from "./core/presence.js";
 import { createGoogleTranslator } from "./core/translators/google.js";
 import { createCachedTranslator } from "./core/cache.js";
 import { createOpenAICompatibleTranslator } from "./core/translators/openai-compatible.js";
@@ -18,7 +16,7 @@ import { CLAUDE_CODE_MODELS, createClaudeCodeTranslator } from "./core/translato
 import { keyBinding } from "./core/key-binding.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const WORKER = path.join(here, "..", "ocr", "ocr-worker.ps1");
+const STRIP_WORKER = path.join(here, "..", "ocr", "strip-worker.ps1");
 const DETECT_PANEL = path.join(here, "..", "ocr", "detect-panel.ps1");
 const TARGET_LANG = "es";
 const GAME_EXE = "Wow.exe";
@@ -62,7 +60,6 @@ const status = (text) => send("status", text);
 
 // Pipeline: OCR lines -> new messages -> translation -> overlay -----------
 
-const tracker = createTracker();
 const google = createGoogleTranslator();
 
 // Translator settings ------------------------------------------------------
@@ -184,21 +181,18 @@ function debug(...parts) {
 }
 
 // Paused translation keeps new messages untranslated; any of them can be translated
-// later by clicking it in the overlay.
+// later by clicking it in the overlay. Text from the pixel strip is exact, so no OCR
+// corrections are applied.
 const pipeline = createMessagePipeline({
   getTranslator: () => translator,
   send,
   isPaused: () => prefs().translationPaused,
+  ocrFixes: false,
 });
 
-function handleOcrLines(lines) {
-  const parsed = parseLines(lines);
-  const fresh = tracker.newMessages(parsed);
-  debug("ocr", { lines: lines.length, parsed: parsed.map((m) => m.seq), fresh: fresh.map((m) => m.seq) });
-  pipeline.addMessages(fresh);
-}
-
-// OCR worker --------------------------------------------------------------
+// Strip reader ------------------------------------------------------------
+// The addon draws each chat message as a small grid of colored cells at the top-left
+// of the WoW window; strip-worker.ps1 captures that corner and this decodes it.
 
 function stopWorker() {
   if (worker) {
@@ -210,19 +204,12 @@ function stopWorker() {
 
 function startWorker() {
   stopWorker();
-  const r = config.region;
-  if (!r) {
-    status("Calibra la zona del panel en ⚙ → Ventana → Calibrar");
-    return;
-  }
-  const args = [
-    "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", WORKER,
-    "-X", String(r.x), "-Y", String(r.y), "-W", String(r.w), "-H", String(r.h),
-    "-Scale", String(config.ocrScale ?? 2),
-  ];
-  const proc = spawn("powershell.exe", args, { windowsHide: true });
+  const proc = spawn("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", STRIP_WORKER], {
+    windowsHide: true,
+  });
   worker = proc;
-  const presence = createPresence({ threshold: 3, onChange: onPanelPresence });
+  const layout = {}; // cell size and offset found last time
+  let lastSeq = null;
   send("ocr:state", "starting");
   createInterface({ input: proc.stdout }).on("line", (line) => {
     let data;
@@ -234,22 +221,32 @@ function startWorker() {
     if (data.error) {
       debug("worker error", data.error);
       send("ocr:state", "error");
-      return status(`OCR: ${data.error}`);
+      return status(`Lector: ${data.error}`);
     }
-    if (!("lines" in data) && process.env.WCT_DEBUG === "1") debug("tick", { panel: data.panel });
-    if (typeof data.panel === "boolean") presence.update(data.panel);
-    if (!("lines" in data)) return;
-    const lines = Array.isArray(data.lines) ? data.lines : data.lines ? [data.lines] : [];
+    if (data.wow === false) return send("ocr:state", "idle");
+    if (data.strip === false) {
+      debug("strip absent");
+      send("ocr:state", "nostrip");
+      return onPanelPresence(false);
+    }
+    if (!data.patch) return;
+    const frame = findStrip(Buffer.from(data.patch, "base64"), data.w, data.h, layout);
+    if (!frame) return debug("strip undecodable");
+    if (panelPresent !== true) onPanelPresence(true);
     send("ocr:state", "ok");
     status("");
-    handleOcrLines(lines);
+    if (frame.seq === lastSeq) return;
+    lastSeq = frame.seq;
+    if (!frame.message) return; // idle frame: addon running, nothing new
+    debug("strip", { seq: frame.seq, cell: layout.cell, channel: frame.message.channel });
+    pipeline.addMessages([frame.message]);
   });
-  proc.stderr.on("data", (d) => console.error(`[ocr] ${d}`));
+  proc.stderr.on("data", (d) => console.error(`[strip] ${d}`));
   proc.on("exit", (code) => {
     if (worker === proc) {
       worker = null;
       send("ocr:state", "error");
-      status(`El lector OCR se detuvo (código ${code}). Recalibra para reiniciarlo.`);
+      status(`El lector se detuvo (código ${code}).`);
     }
   });
 }
@@ -452,8 +449,7 @@ function onGameStart() {
   userHidden = false;
   registerShortcuts();
   // With a calibrated region, panel detection decides when to show the window.
-  if (config.region) startWorker();
-  else openCalibration();
+  startWorker();
   updateTray();
 }
 
@@ -503,7 +499,6 @@ function updateTray() {
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: "Mostrar ventana", click: showOverlay },
-      { label: "Calibrar zona del panel", click: () => openCalibration() },
       { type: "separator" },
       {
         label: "Iniciar con Windows",

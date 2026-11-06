@@ -127,8 +127,6 @@ $("w-font").oninput = (e) => {
   window.wct.setPrefs({ fontSize: Number(e.target.value) });
 };
 $("w-ontop").onchange = (e) => savePrefs({ alwaysOnTop: e.target.checked });
-$("w-calib").onclick = () => window.wct.calibrate();
-$("w-dock").onclick = () => window.wct.dock();
 $("g-autostart").onchange = (e) => savePrefs({ autoStart: e.target.checked });
 $("g-clear").onclick = () => window.wct.clearMessages();
 $("g-quit").onclick = () => window.wct.quit();

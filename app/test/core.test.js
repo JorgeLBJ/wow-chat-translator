@@ -624,3 +624,13 @@ describe("message pipeline double click", () => {
     expect(tr.translate).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("message pipeline with exact (strip) text", () => {
+  it("does not apply OCR corrections when the text is exact", async () => {
+    const sent = [];
+    const tr = { translate: vi.fn(async (t) => ({ text: t, source: "en" })) };
+    const p = createMessagePipeline({ getTranslator: () => tr, send: (c, d) => sent.push([c, d]), isPaused: () => false, ocrFixes: false });
+    p.addMessages([{ channel: "Trade", cls: "MAGE", player: "Ana", text: "101" }, { channel: "Say", cls: null, player: "B", text: "i < 3 > you" }]);
+    expect(sent.filter(([c]) => c === "chat:add").map(([, d]) => d.original)).toEqual(["101", "i < 3 > you"]);
+  });
+});

@@ -178,7 +178,6 @@ function setMode(next) {
 
 $("btn-t").onclick = () => setMode("t");
 $("btn-o").onclick = () => setMode("o");
-$("dock").onclick = () => window.wct.dock();
 $("min").onclick = () => window.wct.minimize();
 $("max").onclick = () => window.wct.maximize();
 $("close").onclick = () => window.wct.close();
@@ -192,11 +191,18 @@ window.wct.onMaximized((maxed) => {
 
 // Footer ----------------------------------------------------------------------
 
-const OCR_LABELS = { ok: "OCR activo", starting: "OCR iniciando", error: "OCR detenido", idle: "Esperando a WoW" };
+const OCR_LABELS = {
+  ok: "Lector activo",
+  starting: "Lector iniciando",
+  error: "Lector detenido",
+  idle: "Esperando a WoW",
+  nostrip: "Sin franja del addon",
+};
 window.wct.onOcrState((state) => {
-  $("dot").className = `dot ${state}`;
-  $("ocr-label").textContent = OCR_LABELS[state] ?? "OCR";
-  $("sub").textContent = { ok: "● leyendo", error: "● detenido", idle: "esperando a WoW" }[state] ?? "iniciando…";
+  $("dot").className = `dot ${state === "nostrip" ? "starting" : state}`;
+  $("ocr-label").textContent = OCR_LABELS[state] ?? "Lector";
+  $("sub").textContent =
+    { ok: "● leyendo", error: "● detenido", idle: "esperando a WoW", nostrip: "sin franja" }[state] ?? "iniciando…";
 });
 window.wct.onStatus((text) => { $("status").textContent = text; });
 

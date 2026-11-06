@@ -22,11 +22,12 @@ Branch: `feat/chat-translator` · Delivery: `ask-on-risk` · Test runner: Vitest
 |----|-------|------|-------|--------|--------|
 | P1 | S3 | Protocol module in JS: encoder (for tests) + decoder from sampled cell colors (calibration, marker, checksum, UTF-8 fields) | inline | done: 8 round-trip tests (links, accents, emoji, noise, gamma, bad marker, checksum, seq wrap, truncation) GREEN | |
 | P2 | S1, S3 | Addon: strip renderer (pixel-exact cells, queue + hold, payload) replacing the OCR panel | inline | done: Lua encoder == JS encoder on all 384 cells (fengari cross-check), JS decodes the Lua frame exactly incl. a real |cnIQ1 link; idle frame; needs in-game check | |
-| P3 | S4 | Capture worker: locate the WoW client area, sample cell centers fast, emit raw colors on change | inline | pending | |
-| P4 | S2, S4 | App: feed decoded messages into the existing pipeline; retire OCR panel calibration/dock UI | inline | pending | |
+| P3 | S4 | Capture worker: locate the WoW client area, sample cell centers fast, emit raw colors on change | inline | done: strip-worker.ps1 (260x28 patch at the WoW client origin every 35 ms, marker precheck, emits only on change/state change) + strip-reader.js (cell 1-4, offset 0-2, layout hint) | |
+| P4 | S2, S4 | App: feed decoded messages into the existing pipeline; retire OCR panel calibration/dock UI | inline | done: main uses the strip reader (ocrFixes off, seq dedupe, instant presence); dock/calibrate UI removed (dormant code left for cleanup) | |
 | P5 | S1-S5 | Live verification in game (exactness, latency, CPU) | inline | pending | |
 
 ## Log
 
 - **L1** (2026-11-06, user, verbatim): "si, aunque me gustaría que averigues en internet si se puede capturar como log el chat, se que lo exploramos pero nuevamente". Research: WoWChatLog.txt is only written at logout (wowprogramming LoggingChat docs, WoWInterface), confirmed again. Found Parley (MIT, pixel strip + desktop overlay, clipboard replies) and LibSerpix (MIT, pixel serialization).
 - **L2** (2026-11-06, user, verbatim): "bien vamos con esa adaptación para ya no tener que tener un recuadro negro. Por otro lado, en parley como hacen con el reply solo es copia como el nuestro? o manda al chat". Parley replies: clipboard + manual paste ("You always paste and send replies yourself"). Next: P1.
+- **L3** (2026-11-06): P1-P4 implemented. Cross-check: Lua encoder == JS encoder on all 384 cells (fengari), JS decodes the Lua frame exactly. Exact text means OCR fixes are off for strip input (a real "101" stays "101"). End-to-end check without the game: a test window drew JS-encoded frames at screen (0,0); the real strip-worker captured them and the app decoded all three messages exactly (link, ñ, emoji), layout cell 2 / offset 0 at devicePixelRatio 1. RED then 113/113 GREEN. Next: P5 in game after /reload.
