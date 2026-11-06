@@ -5,7 +5,6 @@ const on = (channel) => (cb) => ipcRenderer.on(channel, (_e, payload) => cb(payl
 contextBridge.exposeInMainWorld("wct", {
   onAdd: on("chat:add"),
   onUpdate: on("chat:update"),
-  onToggle: on("view:toggle"),
   onStatus: on("status"),
   onOcrState: on("ocr:state"),
   onMaximized: on("win:maximized"),

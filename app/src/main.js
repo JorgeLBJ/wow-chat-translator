@@ -226,7 +226,7 @@ function startWorker() {
   stopWorker();
   const r = config.region;
   if (!r) {
-    status("Calibra la zona del panel desde ⚙ o con Ctrl+Shift+R");
+    status("Calibra la zona del panel en ⚙ → Ventana → Calibrar");
     return;
   }
   const args = [
@@ -451,11 +451,11 @@ function isGameRunning() {
   });
 }
 
-// Global hotkeys only exist while the game runs, so they never steal these
-// combinations from other programs.
+// The only global hotkey (quick compose). It exists only while the game runs, so it
+// never steals the combination from other programs. Calibration and the
+// translated/original toggle have buttons and no hotkey: Ctrl+Shift+R/T clashed
+// with the user's in-game keybinds.
 function registerShortcuts() {
-  globalShortcut.register("CommandOrControl+Shift+T", () => send("view:toggle"));
-  globalShortcut.register("CommandOrControl+Shift+R", () => openCalibration());
   globalShortcut.register("CommandOrControl+Shift+Enter", () => focusCompose());
 }
 

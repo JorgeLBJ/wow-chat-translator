@@ -80,7 +80,6 @@
   .dot.ok { background: #22c55e; } .dot.idle { background: #6b7280; } .dot.error { background: #ef4444; } .dot.starting { background: #f59e0b; }
   #status { overflow: hidden; text-overflow: ellipsis; color: #fbbf24; }
   .ft input[type=range] { accent-color: #3b82f6; width: 80px; }
-  .fs { all: unset; cursor: pointer; color: #ccc; padding: 0 4px; border-radius: 4px; font-weight: 600; }
   .fs:hover { background: rgba(255,255,255,.1); }
 
   /* translator settings */
@@ -165,7 +164,6 @@
     <span id="status"></span>
     <span style="flex:1"></span>
     Opacidad <input type="range" id="opacity" min="40" max="100">
-    Texto <button class="fs" id="fs-down">A−</button><button class="fs" id="fs-up">A+</button>
   </div>
   <div class="modal" id="settings">
     <div class="sheet">
@@ -247,10 +245,8 @@
           <button class="btn" id="g-clear">Limpiar</button>
         </div>
         <div class="keys">
-          <b>Atajos (solo con WoW abierto)</b>
-          <div><kbd>Ctrl+Shift+T</kbd> Traducido / Original</div>
+          <b>Atajo (solo con WoW abierto)</b>
           <div><kbd>Ctrl+Shift+Enter</kbd> Escribir un mensaje</div>
-          <div><kbd>Ctrl+Shift+R</kbd> Calibrar la zona del panel</div>
         </div>
         <div class="row-set">
           <div><b>Salir</b><div class="hint">Cierra la app por completo. ✕ solo la oculta.</div></div>

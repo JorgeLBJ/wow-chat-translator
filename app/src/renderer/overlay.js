@@ -152,7 +152,6 @@ function setMode(next) {
 
 $("btn-t").onclick = () => setMode("t");
 $("btn-o").onclick = () => setMode("o");
-window.wct.onToggle(() => setMode(mode === "t" ? "o" : "t"));
 $("dock").onclick = () => window.wct.dock();
 $("min").onclick = () => window.wct.minimize();
 $("max").onclick = () => window.wct.maximize();
@@ -206,9 +205,6 @@ $("w-font").oninput = (e) => {
   applyPrefs();
 };
 $("w-font").onchange = () => window.wct.setPrefs({ fontSize: prefs.fontSize });
-const changeFont = (delta) => savePrefs({ fontSize: Math.min(22, Math.max(10, prefs.fontSize + delta)) });
-$("fs-down").onclick = () => changeFont(-1);
-$("fs-up").onclick = () => changeFont(1);
 
 // Compose ---------------------------------------------------------------------
 
