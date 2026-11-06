@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, screen } from "electron";
+import { app, BrowserWindow, Menu, Tray, clipboard, globalShortcut, ipcMain, nativeImage, screen } from "electron";
 import { execFile, spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import fs from "node:fs";
@@ -18,7 +18,8 @@ const DETECT_PANEL = path.join(here, "..", "ocr", "detect-panel.ps1");
 const TARGET_LANG = "es";
 const GAME_EXE = "Wow.exe";
 const GAME_CHECK_MS = 5000;
-const DEFAULT_PREFS = { fontSize: 13, opacity: 1, alwaysOnTop: true };
+const DEFAULT_PREFS = { fontSize: 13, opacity: 1, alwaysOnTop: true, autoStart: true };
+const STARTED_HIDDEN = process.argv.includes("--hidden");
 
 // Config -----------------------------------------------------------------
 
@@ -45,6 +46,9 @@ let overlay = null;
 let calibration = null;
 let worker = null;
 let restoreBounds = null; // bounds before "maximize"
+let tray = null;
+let watcher = null;
+let quitting = false;
 
 const send = (channel, payload) => overlay?.webContents.send(channel, payload);
 const status = (text) => send("status", text);
@@ -161,15 +165,23 @@ function createOverlay() {
   overlay.setContentProtection(true);
   overlay.loadFile(path.join(here, "renderer", "overlay.html"));
   overlay.once("ready-to-show", () => {
-    overlay.showInactive();
-    startWorker();
+    // Started by hand: show the window even before WoW opens. Started with
+    // Windows (--hidden): stay in the tray until the game appears.
+    if (!STARTED_HIDDEN) overlay.showInactive();
+    if (!watcher?.running) status("Esperando a que abras WoW…");
   });
   const persist = () => {
     if (!restoreBounds) saveConfig({ overlayBounds: overlay.getBounds() });
   };
   overlay.on("moved", persist);
   overlay.on("resized", persist);
-  overlay.on("closed", () => app.quit());
+  // The ✕ button and Alt+F4 only hide; quitting is done from the tray menu.
+  overlay.on("close", (e) => {
+    if (!quitting) {
+      e.preventDefault();
+      overlay.hide();
+    }
+  });
 }
 
 function applyAlwaysOnTop() {
@@ -251,7 +263,7 @@ function openCalibration() {
     calibration = null;
     ipcMain.removeAllListeners("calib:done");
     overlay?.showInactive();
-    startWorker();
+    if (watcher?.running) startWorker();
   });
 
   ipcMain.once("calib:done", (_e, rect) => {
@@ -275,7 +287,7 @@ function focusCompose() {
   send("compose:focus");
 }
 
-// Game watcher: quit when WoW closes ---------------------------------------
+// Game watcher: show with WoW, hide when it closes ------------------------
 
 function isGameRunning() {
   return new Promise((resolve, reject) => {
@@ -288,17 +300,89 @@ function isGameRunning() {
   });
 }
 
+// Global hotkeys only exist while the game runs, so they never steal these
+// combinations from other programs.
+function registerShortcuts() {
+  globalShortcut.register("CommandOrControl+Shift+T", () => send("view:toggle"));
+  globalShortcut.register("CommandOrControl+Shift+R", () => openCalibration());
+  globalShortcut.register("CommandOrControl+Shift+Enter", () => focusCompose());
+}
+
+function onGameStart() {
+  registerShortcuts();
+  overlay?.showInactive();
+  if (config.region) startWorker();
+  else openCalibration();
+  updateTray();
+}
+
+function onGameExit() {
+  globalShortcut.unregisterAll();
+  stopWorker();
+  overlay?.hide();
+  status("Esperando a que abras WoW…");
+  send("ocr:state", "idle");
+  updateTray();
+}
+
 function startGameWatcher() {
-  const watcher = createGameWatcher({ isRunning: isGameRunning, onExit: () => app.quit() });
+  watcher = createGameWatcher({ isRunning: isGameRunning, onStart: onGameStart, onExit: onGameExit });
   watcher.check();
   setInterval(() => watcher.check(), GAME_CHECK_MS);
+}
+
+// Tray + start with Windows -------------------------------------------------
+
+function applyAutoStart() {
+  app.setLoginItemSettings({
+    name: "WoW Chat Translator", // registry value name shown in Task Manager > Startup
+    openAtLogin: prefs().autoStart,
+    path: process.execPath,
+    // In development process.execPath is electron.exe, so pass the app folder too.
+    args: app.isPackaged ? ["--hidden"] : [app.getAppPath(), "--hidden"],
+  });
+}
+
+function showOverlay() {
+  overlay?.show();
+}
+
+function updateTray() {
+  if (!tray) return;
+  const p = prefs();
+  tray.setToolTip(`WoW Chat Translator — ${watcher?.running ? "WoW abierto" : "esperando a WoW"}`);
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      { label: "Mostrar ventana", click: showOverlay },
+      { label: "Calibrar zona del panel", click: () => openCalibration() },
+      { type: "separator" },
+      {
+        label: "Iniciar con Windows",
+        type: "checkbox",
+        checked: p.autoStart,
+        click: (item) => {
+          saveConfig({ prefs: { ...prefs(), autoStart: item.checked } });
+          applyAutoStart();
+        },
+      },
+      { type: "separator" },
+      { label: "Salir", click: () => { quitting = true; app.quit(); } },
+    ]),
+  );
+}
+
+function createTray() {
+  const icon = nativeImage.createFromPath(path.join(here, "..", "assets", "tray-32.png")).resize({ width: 16, height: 16 });
+  tray = new Tray(icon);
+  tray.on("click", showOverlay);
+  updateTray();
 }
 
 // IPC ---------------------------------------------------------------------
 
 ipcMain.on("calib:cancel", () => calibration?.close());
 ipcMain.on("app:calibrate", () => openCalibration());
-ipcMain.on("app:close", () => app.quit());
+ipcMain.on("app:close", () => overlay?.hide());
 ipcMain.on("win:minimize", () => overlay?.minimize());
 ipcMain.on("win:maximize", () => toggleMaximize());
 ipcMain.on("win:dock", () => dockOverPanel());
@@ -332,15 +416,25 @@ ipcMain.handle("compose:translate", async (_e, { text, lang }) => {
   }
 });
 
-app.whenReady().then(() => {
-  config = loadConfig();
-  createOverlay();
-  startGameWatcher();
-  globalShortcut.register("CommandOrControl+Shift+T", () => send("view:toggle"));
-  globalShortcut.register("CommandOrControl+Shift+R", () => openCalibration());
-  globalShortcut.register("CommandOrControl+Shift+Enter", () => focusCompose());
-  if (!config.region) overlay.once("ready-to-show", () => openCalibration());
+// A second launch (e.g. the .bat while it already runs) just shows the window.
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on("second-instance", showOverlay);
+  app.whenReady().then(() => {
+    config = loadConfig();
+    createOverlay();
+    createTray();
+    applyAutoStart();
+    startGameWatcher();
+  });
+}
+
+app.on("before-quit", () => {
+  quitting = true;
 });
+// Keep running in the tray when the window is hidden.
+app.on("window-all-closed", () => {});
 
 app.on("will-quit", () => {
   globalShortcut.unregisterAll();

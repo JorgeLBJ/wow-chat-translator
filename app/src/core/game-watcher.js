@@ -1,23 +1,25 @@
-// Calls onExit once the game, after having been seen running, is no longer running.
-// If the app starts before the game, it simply waits for the game to appear.
-// Probe errors are ignored so a failed check never closes the app by mistake.
+// Polls whether the game is running and reports transitions:
+// onStart when it appears, onExit when it closes. Works for repeated sessions.
+// Probe errors are ignored so a failed check never counts as the game closing.
 
-export function createGameWatcher({ isRunning, onExit }) {
-  let seen = false;
-  let done = false;
+export function createGameWatcher({ isRunning, onStart, onExit }) {
+  let running = false;
   return {
+    get running() {
+      return running;
+    },
     async check() {
-      if (done) return;
-      let running;
+      let now;
       try {
-        running = await isRunning();
+        now = await isRunning();
       } catch {
         return;
       }
-      if (running) {
-        seen = true;
-      } else if (seen) {
-        done = true;
+      if (now && !running) {
+        running = true;
+        onStart();
+      } else if (!now && running) {
+        running = false;
         onExit();
       }
     },

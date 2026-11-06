@@ -156,23 +156,30 @@ describe("channelTab", () => {
 
 describe("createGameWatcher", () => {
   const run = async (states) => {
+    const onStart = vi.fn();
     const onExit = vi.fn();
     let i = 0;
-    const w = createGameWatcher({ isRunning: async () => states[Math.min(i++, states.length - 1)], onExit });
+    const w = createGameWatcher({ isRunning: async () => states[i++], onStart, onExit });
     for (let k = 0; k < states.length; k++) await w.check();
-    return onExit;
+    return { onStart, onExit };
   };
 
-  it("fires onExit once the game was seen running and then stops", async () => {
-    expect(await run([true, true, false])).toHaveBeenCalledTimes(1);
+  it("fires onStart when the game appears and onExit when it closes", async () => {
+    const { onStart, onExit } = await run([false, true, true, false]);
+    expect(onStart).toHaveBeenCalledTimes(1);
+    expect(onExit).toHaveBeenCalledTimes(1);
   });
 
-  it("does not fire while the game has not started yet", async () => {
-    expect(await run([false, false, false])).not.toHaveBeenCalled();
+  it("does not fire anything while the game has not started", async () => {
+    const { onStart, onExit } = await run([false, false, false]);
+    expect(onStart).not.toHaveBeenCalled();
+    expect(onExit).not.toHaveBeenCalled();
   });
 
-  it("waits for the game to start before watching for exit", async () => {
-    expect(await run([false, true, false])).toHaveBeenCalledTimes(1);
+  it("handles the game being opened and closed several times", async () => {
+    const { onStart, onExit } = await run([true, false, true, false]);
+    expect(onStart).toHaveBeenCalledTimes(2);
+    expect(onExit).toHaveBeenCalledTimes(2);
   });
 
   it("ignores probe errors instead of treating them as an exit", async () => {
@@ -181,6 +188,7 @@ describe("createGameWatcher", () => {
     let i = 0;
     const w = createGameWatcher({
       isRunning: async () => { const a = answers[i++]; if (a instanceof Error) throw a; return a; },
+      onStart: () => {},
       onExit,
     });
     await w.check();

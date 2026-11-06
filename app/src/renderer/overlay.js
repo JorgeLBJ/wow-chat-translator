@@ -182,11 +182,11 @@ $("m-clear").onclick = () => {
 
 // Footer ----------------------------------------------------------------------
 
-const OCR_LABELS = { ok: "OCR activo", starting: "OCR iniciando", error: "OCR detenido" };
+const OCR_LABELS = { ok: "OCR activo", starting: "OCR iniciando", error: "OCR detenido", idle: "Esperando a WoW" };
 window.wct.onOcrState((state) => {
   $("dot").className = `dot ${state}`;
   $("ocr-label").textContent = OCR_LABELS[state] ?? "OCR";
-  $("sub").textContent = state === "ok" ? "● leyendo" : state === "error" ? "● detenido" : "iniciando…";
+  $("sub").textContent = { ok: "● leyendo", error: "● detenido", idle: "esperando a WoW" }[state] ?? "iniciando…";
 });
 window.wct.onStatus((text) => { $("status").textContent = text; });
 
