@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'">
+<style>
+  html, body { margin: 0; height: 100%; cursor: crosshair; user-select: none; }
+  body { background: rgba(0, 0, 0, .35); font: 15px "Segoe UI", system-ui, sans-serif; }
+  .help { position: fixed; top: 24px; left: 50%; transform: translateX(-50%); background: #111827; color: #fff;
+    padding: 10px 16px; border-radius: 8px; border: 1px solid #3b82f6; text-align: center; line-height: 1.5; }
+  #sel { position: fixed; border: 2px solid #3b82f6; background: rgba(59, 130, 246, .15); display: none; }
+</style>
+</head>
+<body>
+<div class="help">
+  Arrastra un rectángulo que cubra el <b>panel negro del addon</b> (solo el área del texto).<br>
+  Suelta para guardar · <b>Esc</b> para cancelar
+</div>
+<div id="sel"></div>
+<script src="calibrate.js"></script>
+</body>
+</html>

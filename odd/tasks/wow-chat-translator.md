@@ -1,0 +1,55 @@
+# WoW Chat Translator
+
+Objective: translate WoW Forever chat to Spanish in real time (overlay) and translate outgoing messages ES→EN, without memory injection or input automation.
+Branch: `main` (new repo) · Delivery: `ask-on-risk` · Test runner: Vitest (app), manual in-game checks (addon).
+
+## Specs
+
+- **S1** — Incoming translation. User request: "quiero crear un addon que traduzca el chat en tiempo real, osea la gente escribe en múltiples idiomas pero quisiera que se traduzca a español". Messages already in Spanish are shown untranslated.
+- **S2** — Original toggle. User request: "claro tenga un toggle o algo para ver su escritura horiginal". Global toggle Translated/Original (hotkey `Ctrl+Shift+T`) plus hover on a message shows its original text.
+- **S3** — Outgoing translation. User request: "cuando yo escriba, mandé al chat con el idioma que quiera (osea ingles) solo ingles y español". Compose box in the overlay with selector `[EN | ES]`; ES passes text through unchanged; EN translates. Shows a preview and copies the result to the clipboard; the user pastes it into WoW manually (`Enter`, `Ctrl+V`, `Enter`). The app never simulates keystrokes into the game.
+- **S4** — Capture architecture (approved). `/chatlog` is unusable on WoW Forever (file stayed at 0 bytes after chat and `/reload`, verified 2026-11-06). The addon renders incoming chat into a dedicated OCR panel: black background, white Arial Narrow text (default size 18), no colors, item links or raid icons, one message per line formatted `NNN Channel Player Name: message` (Channel is one word; player names may contain spaces; NNN = sequence 000-999 for new-line detection; long messages wrap). The external app captures only that screen region, runs OCR only when the region changed, and processes only new lines.
+- **S5** — Cost constraints (approved): OCR is local and free (Windows OCR `Windows.Media.Ocr`, fallback Tesseract.js); translations are cached; Spanish messages are never sent to the translator. Near-zero CPU while chat is idle.
+- **S6** — Safety: addon uses only the official API; app only reads the screen and the clipboard. No DLL injection, no memory reading, no input automation.
+- **S8** — UI v2 (approved 2026-11-06, user: "si" to mockup v2). User request verbatim: "porque no lo haces más elegante si es externa, que pueda maximizar o mas cosas, por ejemplo que reconozca por colores al clases, etc". Class-colored names (addon adds class token: `NNN Channel CLASS Player Name: message`, `NOCLASS` if unknown), channel tabs Todos/General/Comercio/Hermandad/Grupo/Susurros with unread counters, minimize/maximize/close, always-on-top toggle (📌), dock over panel (⧉), settings menu (⚙), opacity, font size, timestamps, compose box at the bottom.
+- **S7** (experimental, optional) — Overlay may be excluded from screen capture (Electron content protection) so it can cover the addon panel. Must be verified on this machine before relying on it.
+
+## Environment facts
+
+- Client: `C:\Program Files (x86)\Juegos\World of Warcraft\_forever_\`, product `wowf` 1.60.1 (official Blizzard). Addon `## Interface: 16001`.
+- WoW must run in windowed or borderless mode for the overlay to show.
+- Windows OCR recognizers installed: only `es-MX` (Latin script; English/Portuguese/German likely readable, Cyrillic/CJK not). Install `en-US` OCR pack if accuracy is poor.
+- Node v24.3.0.
+
+## Open decisions
+
+- Translation provider: user approved keyless Google first (2026-11-06), swappable later. Jargon quality is weak ("LFM ZG need heal" -> "LFM ZG necesita curarse"); LLM is the upgrade path.
+
+## Tasks
+
+| ID | Specs | Task | Route | Status | Commit |
+|----|-------|------|-------|--------|--------|
+| T1 | S4, S6 | Addon `WoWChatTranslator`: listen to chat events, render OCR panel, movable, `/wct` show/hide | inline | done (in-game + OCR verified) | |
+| T2 | S4, S5 | App skeleton (Electron): transparent always-on-top overlay window, config file with panel region | inline | written, awaiting first run | |
+| T3 | S4, S5 | Region capture + change detection + Windows OCR; calibration tool for panel region | inline | worker verified on live screen; calibration awaiting first run | |
+| T4 | S4 | Line parser `Channel|Player|Message` + dedupe of already-processed lines (unit tests) | inline | done, tests GREEN | |
+| T5 | S1, S5 | Language detection, translation provider adapter, cache (unit tests) | inline | done, tests GREEN + live check | |
+| T6 | S1, S2 | Overlay UI: channel colors, language badge, hover original, global toggle `Ctrl+Shift+T` | inline | written, awaiting first run | |
+| T7 | S3 | Compose box: `[EN|ES]`, preview, copy to clipboard | inline | written in v2 (Enter = translate+copy, Ctrl+Shift+Enter focuses box); awaiting user check | |
+| T9 | S8 | UI v2 + addon class token | inline | done: 34/34 tests GREEN, UI rendered offscreen and inspected; awaiting user check in game | |
+| T8 | S7 | Experiment: overlay excluded from capture | inline | done: verified, overlay always content-protected + 📌 dock button | |
+
+## Log
+
+- **L1** (2026-11-06, user, verbatim): "Hola, quiero crear un addon que traduzca el chat en tiempo real, osea la gente escribe en múltiples idiomas pero quisiera que se traduzca a español y claro tenga un toggle o algo para ver su escritura horiginal"
+- **L2** (2026-11-06, user, verbatim): "Pero también me gustaría que por ejemplo cuando yo escriba, mandé al chat con el idioma que quiera (osea ingles) solo ingles y español"
+- **L3** (2026-11-06): Addon sandbox has no HTTP/file I/O, so translation must happen in an external app. `/chatlog` tested: 0 bytes after 2 min of chat, after `/say prueba 123` and after `/reload` → rejected. User approved addon + OCR + overlay, and the "translate and paste" outgoing flow.
+- **L4** (2026-11-06): T1 written. Format changed from `Channel|Player|Message` to `NNN [Channel] Player: message`: OCR often misreads `|` as `l`/`I`, and a sequence number makes dedupe reliable. Addon linked into AddOns via junction. Engram mirror pending (project not registered in Engram).
+- **L5** (2026-11-06): In-game check OK with real chat (screenshot). Windows OCR (es-MX) on the panel read all 4 lines; errors: brackets misread (`[General)`, `[Generan`), `j`->`i`, lone `i` dropped at scale 1. Fix: brackets removed, default font 14->18. Player names can contain spaces (`Sunt Chank`). OCR script: app/ocr/win-ocr.ps1.
+- **L6** (2026-11-06): User asked "pero donde veo la traduccion"; approved keyless Google ("a ok"). `translate_a/single?client=gtx` returned 429 "Sorry" page on first call from this IP; switched to `clients5.google.com/translate_a/t?client=dict-chrome-ex` (200, returns [[text, src]]). Core modules (parser, tracker, language, google, cache): RED observed (modules missing), then 18/18 GREEN. OCR worker verified on live 2560x1440 screen reading new format lines. S5 note: Spanish skip is a local heuristic; non-obvious Spanish still goes to Google and is shown untranslated when source=es.
+- **L7** (2026-11-06): First run: user calibrated (region x13 y862 w601 h229) and asked "pero ya seleccione el cuadro que pedia, pero a que hora traduce?". Cause: tight left edge clipped the leading 0, OCR read `)26`, parser rejected every line. Fix: parser maps `(`/`)` to 0 (RED then 19/19 GREEN). Simulated pipeline on the real OCR lines translates correctly. App relaunched.
+- **L8** (2026-11-06, user, verbatim): "es necesario que ese cuadro negro este (se que hace el ocr sobre el pero no podria estar background? o cómo funciona, por otro lado la ventana de chat reducido me parec e que deberi a poder redimencionarse". S7 experiment: without setContentProtection OCR read "OVERLAY TEST WINDOW"; with it, OCR read the panel underneath. Overlay now always content-protected (side effect: it does not appear in user screenshots), 📌 docks it over the calibrated region, hidden during calibration. Native resize does not work on transparent frameless windows; added custom bottom-right grip.
+- **L9** (2026-11-06, user, verbatim): "la pantalla negra también debería poder redimensionarse para que se alinea a mi ui". Added bottom-right size grip to the addon panel (hidden while locked so OCR never reads it); size and position saved in WCT_DB. Screenshot showed the panel flush with the screen left edge, which explains the clipped leading 0.
+- **L10** (2026-11-06): Tooltips: native `title` does not show on the unfocused overlay; replaced with CSS tooltips.
+- **L11** (2026-11-06, user, verbatim): "a el chat es una herramienta externa que no está en el wow, recien lo vi, porque no lo haces más elegante si es externa, que pueda maximizar o mas cosas, por ejemplo que reconozca por colores al clases, etc". Mockup v2 approved ("si"). Implemented S8 + T7. Parser reads optional class token with fuzzy match (OCR errors like `WARL0CK`, `PALADlN`); RED observed for new tests, then 34/34 GREEN. Maximize is emulated with setBounds (transparent frameless windows). After Enter the compose box blurs the window; whether focus returns to WoW is unverified.
+- **L12** Next: user `/reload` (class token), check v2 in game, then commit review.

@@ -1,0 +1,16 @@
+{
+  "name": "wow-chat-translator",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Overlay that reads the WoWChatTranslator addon panel via OCR and translates chat to Spanish.",
+  "type": "module",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "electron": "^45.2.3",
+    "vitest": "^5.1.0"
+  }
+}

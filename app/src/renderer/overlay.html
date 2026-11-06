@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'">
+<title>WoW Chat Translator</title>
+<style>
+  html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }
+  body { font: 13px/1.5 "Segoe UI", system-ui, sans-serif; color: #e6e6e6; }
+  .win { position: relative; height: 100%; box-sizing: border-box; display: flex; flex-direction: column;
+    background: rgba(14, 16, 22, .97); border: 1px solid rgba(255,255,255,.1); border-radius: 10px; overflow: hidden; }
+  .maxed .win { border-radius: 0; }
+
+  /* title bar */
+  .tb { display: flex; align-items: center; gap: 6px; padding: 6px 6px 6px 12px; background: rgba(255,255,255,.03);
+    border-bottom: 1px solid rgba(255,255,255,.07); -webkit-app-region: drag; user-select: none; }
+  .tb .t { flex: 1; font-weight: 600; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tb .t small { font-weight: 400; color: #7d8590; margin-left: 6px; }
+  .tb button, .seg, .menu { -webkit-app-region: no-drag; }
+  .seg { display: flex; background: rgba(255,255,255,.07); border-radius: 6px; padding: 2px; }
+  .seg button { all: unset; cursor: pointer; padding: 2px 9px; border-radius: 5px; font-size: 11px; color: #aab; }
+  .seg button.on { background: #3b82f6; color: #fff; }
+  .ib { all: unset; width: 28px; height: 24px; display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 5px; color: #9aa3ad; cursor: pointer; position: relative; font-size: 13px; }
+  .ib:hover { background: rgba(255,255,255,.1); color: #fff; }
+  .ib.on { color: #60a5fa; }
+  .ib.x:hover { background: #c42b1c; }
+  .sep { width: 1px; height: 16px; background: rgba(255,255,255,.12); }
+  /* Native title tooltips do not show on an unfocused window, so draw our own. */
+  [data-tip]:hover::after { content: attr(data-tip); position: absolute; top: calc(100% + 6px); right: 0; white-space: nowrap;
+    background: #0b0f17; border: 1px solid #3b82f6; color: #fff; font-size: 11px; padding: 3px 8px; border-radius: 5px;
+    z-index: 20; pointer-events: none; }
+
+  .menu { position: absolute; top: 40px; right: 70px; z-index: 30; background: #0f141d; border: 1px solid rgba(255,255,255,.15);
+    border-radius: 8px; padding: 4px; min-width: 230px; box-shadow: 0 10px 30px rgba(0,0,0,.5); display: none; }
+  .menu.open { display: block; }
+  .menu button { all: unset; display: flex; justify-content: space-between; gap: 12px; width: 100%; box-sizing: border-box;
+    padding: 6px 10px; border-radius: 5px; cursor: pointer; font-size: 12px; }
+  .menu button:hover:not([disabled]) { background: rgba(255,255,255,.08); }
+  .menu button[disabled] { cursor: default; color: #9aa3ad; }
+  .menu kbd { color: #7d8590; font: 11px "Segoe UI"; }
+
+  /* tabs */
+  .tabs { display: flex; gap: 2px; padding: 6px 10px 0; border-bottom: 1px solid rgba(255,255,255,.07); overflow-x: auto; }
+  .tab { all: unset; padding: 5px 10px; font-size: 11.5px; color: #8b949e; cursor: pointer; border-radius: 6px 6px 0 0; white-space: nowrap; }
+  .tab:hover { color: #ddd; }
+  .tab.on { color: #fff; background: rgba(255,255,255,.06); }
+  .tab .n { font-size: 9.5px; background: #3b82f6; color: #fff; border-radius: 8px; padding: 0 5px; margin-left: 4px; }
+
+  /* messages */
+  #list { flex: 1; overflow-y: auto; padding: 6px; font-size: var(--fs, 13px); }
+  #list::-webkit-scrollbar { width: 6px; }
+  #list::-webkit-scrollbar-thumb { background: rgba(255,255,255,.18); border-radius: 3px; }
+  .m { display: grid; grid-template-columns: 40px 1fr; gap: 6px; padding: 3px 8px; border-radius: 6px; }
+  .m[hidden] { display: none; }
+  .m:hover { background: rgba(255,255,255,.05); }
+  .ts { color: #5c6570; font-size: .82em; padding-top: .15em; font-variant-numeric: tabular-nums; }
+  .body { word-wrap: break-word; min-width: 0; }
+  .ch { font-size: .8em; padding: 0 5px; border-radius: 4px; margin-right: 5px; font-weight: 600; }
+  .who { font-weight: 600; }
+  .lg { font-size: .72em; padding: 0 4px; border-radius: 3px; background: rgba(255,255,255,.1); color: #aab; margin-left: 5px; vertical-align: .1em; }
+  .lg.err { background: #7f1d1d; color: #fecaca; }
+  .pending .txt { opacity: .55; }
+  .orig { display: none; color: #7d8590; font-size: .88em; font-style: italic; }
+  .m.has-orig:hover .orig { display: block; }
+  .empty { color: #5c6570; text-align: center; padding: 30px 10px; font-size: 12px; }
+
+  /* compose */
+  .compose { padding: 8px 10px 6px; border-top: 1px solid rgba(255,255,255,.07); }
+  .row { display: flex; gap: 6px; }
+  .compose input { flex: 1; min-width: 0; background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.1);
+    border-radius: 6px; color: #eee; padding: 6px 9px; font: inherit; outline: none; }
+  .compose input:focus { border-color: #3b82f6; }
+  .preview { font-size: 11.5px; color: #7d8590; margin-top: 5px; min-height: 1em; word-wrap: break-word; }
+  .preview.ok { color: #86efac; }
+  .preview.err { color: #fca5a5; }
+
+  /* footer */
+  .ft { display: flex; align-items: center; gap: 10px; padding: 5px 24px 6px 12px; border-top: 1px solid rgba(255,255,255,.07);
+    font-size: 11px; color: #7d8590; white-space: nowrap; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: #6b7280; display: inline-block; margin-right: 5px; }
+  .dot.ok { background: #22c55e; } .dot.error { background: #ef4444; } .dot.starting { background: #f59e0b; }
+  #status { overflow: hidden; text-overflow: ellipsis; color: #fbbf24; }
+  .ft input[type=range] { accent-color: #3b82f6; width: 80px; }
+  .fs { all: unset; cursor: pointer; color: #ccc; padding: 0 4px; border-radius: 4px; font-weight: 600; }
+  .fs:hover { background: rgba(255,255,255,.1); }
+
+  #grip { position: absolute; right: 0; bottom: 0; width: 16px; height: 16px; cursor: nwse-resize; z-index: 5;
+    background: linear-gradient(135deg, transparent 50%, rgba(255,255,255,.35) 50%, rgba(255,255,255,.35) 60%, transparent 60%,
+      transparent 70%, rgba(255,255,255,.35) 70%, rgba(255,255,255,.35) 80%, transparent 80%); }
+  .maxed #grip { display: none; }
+</style>
+</head>
+<body>
+<div class="win" id="win">
+  <div class="tb">
+    <span class="t">WoW Chat Translator<small id="sub">iniciando…</small></span>
+    <div class="seg">
+      <button id="btn-t" class="on">Traducido</button>
+      <button id="btn-o">Original</button>
+    </div>
+    <span class="sep"></span>
+    <button class="ib" id="dock" data-tip="Tapar el panel del addon">⧉</button>
+    <button class="ib" id="pin" data-tip="Siempre encima">📌</button>
+    <button class="ib" id="gear" data-tip="Ajustes">⚙</button>
+    <span class="sep"></span>
+    <button class="ib" id="min" data-tip="Minimizar">—</button>
+    <button class="ib" id="max" data-tip="Maximizar">☐</button>
+    <button class="ib x" id="close" data-tip="Cerrar">✕</button>
+  </div>
+  <div class="menu" id="menu">
+    <button id="m-calib"><span>Calibrar zona del panel</span><kbd>Ctrl+Shift+R</kbd></button>
+    <button id="m-dock"><span>Tapar el panel del addon</span><kbd>⧉</kbd></button>
+    <button id="m-clear"><span>Limpiar mensajes</span><kbd></kbd></button>
+    <button disabled><span>Alternar traducido/original</span><kbd>Ctrl+Shift+T</kbd></button>
+    <button disabled><span>Escribir mensaje</span><kbd>Ctrl+Shift+Enter</kbd></button>
+  </div>
+  <div class="tabs" id="tabs"></div>
+  <div id="list"></div>
+  <div class="compose">
+    <div class="row">
+      <input id="msg" placeholder="Escribe en español… Enter = traducir y copiar" autocomplete="off" spellcheck="false">
+      <div class="seg" id="out-lang">
+        <button class="on" data-lang="en">EN</button>
+        <button data-lang="es">ES</button>
+      </div>
+    </div>
+    <div class="preview" id="preview"></div>
+  </div>
+  <div class="ft">
+    <span><span class="dot" id="dot"></span><span id="ocr-label">OCR</span> · Google</span>
+    <span id="status"></span>
+    <span style="flex:1"></span>
+    Opacidad <input type="range" id="opacity" min="40" max="100">
+    Texto <button class="fs" id="fs-down">A−</button><button class="fs" id="fs-up">A+</button>
+  </div>
+  <div id="grip"></div>
+</div>
+<script src="overlay.js"></script>
+</body>
+</html>

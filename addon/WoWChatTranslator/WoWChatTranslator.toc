@@ -1,0 +1,8 @@
+## Interface: 16001
+## Title: WoW Chat Translator
+## Notes: Renders incoming chat into a clean panel that the companion app reads via OCR.
+## Author: Jorge Luis Bustamante Jara
+## Version: 0.1.0
+## SavedVariables: WCT_DB
+
+WoWChatTranslator.lua
