@@ -14,10 +14,11 @@ import { createCachedTranslator } from "./core/cache.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const WORKER = path.join(here, "..", "ocr", "ocr-worker.ps1");
+const DETECT_PANEL = path.join(here, "..", "ocr", "detect-panel.ps1");
 const TARGET_LANG = "es";
 const GAME_EXE = "Wow.exe";
 const GAME_CHECK_MS = 5000;
-const DEFAULT_PREFS = { fontSize: 13, opacity: 0.94, alwaysOnTop: true };
+const DEFAULT_PREFS = { fontSize: 13, opacity: 1, alwaysOnTop: true };
 
 // Config -----------------------------------------------------------------
 
@@ -188,29 +189,44 @@ function toggleMaximize() {
   send("win:maximized", Boolean(restoreBounds));
 }
 
-function dockOverPanel() {
+// Exact panel bounds (physical px), detected from the screen around the calibrated
+// region. The overlay is excluded from capture, so this works even while docked.
+function detectPanel(r) {
+  return new Promise((resolve) => {
+    execFile(
+      "powershell.exe",
+      ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", DETECT_PANEL,
+        "-X", String(r.x), "-Y", String(r.y), "-W", String(r.w), "-H", String(r.h)],
+      { windowsHide: true },
+      (err, stdout) => {
+        try {
+          const b = JSON.parse(stdout);
+          resolve(!err && Number.isFinite(b.w) && b.w >= r.w && b.h >= r.h ? b : r);
+        } catch {
+          resolve(r);
+        }
+      },
+    );
+  });
+}
+
+async function dockOverPanel() {
   const r = config.region;
   if (!overlay || !r) return status("Primero calibra la zona del panel");
-  const display = screen.getDisplayNearestPoint({ x: r.x, y: r.y });
+  const p = await detectPanel(r);
+  const display = screen.getDisplayNearestPoint({ x: p.x, y: p.y });
   const sf = display.scaleFactor;
   if (restoreBounds) {
-    overlay.setBounds(restoreBounds);
     restoreBounds = null;
     send("win:maximized", false);
   }
-  // Keep the user's size; only grow if the panel is larger. Anchor to the panel's
-  // bottom-left corner so the window extends upwards like the game chat does.
-  const panel = { x: r.x / sf, y: r.y / sf, w: r.w / sf, h: r.h / sf };
-  const current = overlay.getBounds();
-  const width = Math.max(current.width, Math.ceil(panel.w));
-  const height = Math.max(current.height, Math.ceil(panel.h));
-  const wa = display.workArea;
-  overlay.setBounds({
-    x: Math.round(Math.min(Math.max(panel.x, wa.x), wa.x + wa.width - width)),
-    y: Math.round(Math.max(panel.y + panel.h - height, wa.y)),
-    width,
-    height,
-  });
+  // Cover the panel exactly (rounded outwards). If the panel is smaller than the
+  // window's minimum size, grow upwards/rightwards from its bottom-left corner.
+  const x = Math.floor(p.x / sf);
+  const bottom = Math.ceil((p.y + p.h) / sf);
+  const width = Math.max(320, Math.ceil((p.x + p.w) / sf) - x);
+  const height = Math.max(180, bottom - Math.floor(p.y / sf));
+  overlay.setBounds({ x, y: bottom - height, width, height });
   saveConfig({ overlayBounds: overlay.getBounds() });
 }
 

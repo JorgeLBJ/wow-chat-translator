@@ -27,7 +27,7 @@ const unread = Object.fromEntries(TABS.map((t) => [t.key, 0]));
 let mode = "t";
 let activeTab = "all";
 let outLang = "en";
-let prefs = { fontSize: 13, opacity: 0.94, alwaysOnTop: true };
+let prefs = { fontSize: 13, opacity: 1, alwaysOnTop: true };
 
 function el(tag, cls, text) {
   const n = document.createElement(tag);
