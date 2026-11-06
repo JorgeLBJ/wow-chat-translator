@@ -397,6 +397,7 @@ function openCalibration() {
   if (calibration) return;
   stopWorker();
   overlay?.hide(); // it may be covering the panel the user needs to select
+  settingsWin?.close(); // always on top too: it would sit over the selection screen
   const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
   calibration = new BrowserWindow({
     ...display.bounds,
@@ -620,8 +621,52 @@ ipcMain.handle("prefs:set", (_e, patch) => {
     applyAutoStart();
     updateTray();
   }
+  // Both windows show preferences: keep them in sync.
+  send("prefs:changed", prefs());
+  settingsWin?.webContents.send("prefs:changed", prefs());
   return prefs();
 });
+
+// Settings window ---------------------------------------------------------
+// A separate window so the options never get squeezed into a small overlay.
+
+let settingsWin = null;
+
+function openSettings() {
+  if (settingsWin) {
+    settingsWin.show();
+    settingsWin.focus();
+    return;
+  }
+  const area = screen.getDisplayMatching(overlay?.getBounds() ?? screen.getPrimaryDisplay().bounds).workArea;
+  const width = 500;
+  const height = 600;
+  settingsWin = new BrowserWindow({
+    width,
+    height,
+    x: Math.round(area.x + (area.width - width) / 2),
+    y: Math.round(area.y + (area.height - height) / 2),
+    minWidth: 420,
+    minHeight: 420,
+    frame: false,
+    resizable: true,
+    show: false,
+    backgroundColor: "#0f141d",
+    title: "Ajustes · WoW Chat Translator",
+    webPreferences: { preload: path.join(here, "preload.cjs") },
+  });
+  settingsWin.setAlwaysOnTop(true, "screen-saver"); // above the game, like the overlay
+  settingsWin.setContentProtection(true); // never read by the OCR if placed over the panel
+  settingsWin.loadFile(path.join(here, "renderer", "settings.html"));
+  settingsWin.once("ready-to-show", () => settingsWin.show());
+  settingsWin.on("closed", () => {
+    settingsWin = null;
+  });
+}
+
+ipcMain.on("settings:open", () => openSettings());
+ipcMain.on("settings:close", () => settingsWin?.close());
+ipcMain.on("chat:clear", () => send("chat:clear"));
 ipcMain.on("app:quit", () => {
   quitting = true;
   app.quit();

@@ -174,18 +174,11 @@ window.wct.onOcrState((state) => {
 window.wct.onStatus((text) => { $("status").textContent = text; });
 
 function applyPrefs() {
-  const pct = Math.round(prefs.opacity * 100);
   $("win").style.opacity = prefs.opacity;
-  $("opacity").value = pct;
-  $("w-opacity").value = pct;
-  $("w-opacity-val").textContent = `${pct} %`;
-  $("w-font").value = prefs.fontSize;
-  $("w-font-val").textContent = `${prefs.fontSize} px`;
+  $("opacity").value = Math.round(prefs.opacity * 100);
   $("list").style.setProperty("--fs", `${prefs.fontSize}px`);
   $("pin").classList.toggle("on", prefs.alwaysOnTop);
   $("pin").dataset.tip = prefs.alwaysOnTop ? "Siempre encima: activado" : "Siempre encima: desactivado";
-  $("w-ontop").checked = prefs.alwaysOnTop;
-  $("g-autostart").checked = prefs.autoStart !== false;
 }
 
 const savePrefs = async (patch) => {
@@ -193,18 +186,23 @@ const savePrefs = async (patch) => {
   applyPrefs();
 };
 
-for (const id of ["opacity", "w-opacity"]) {
-  $(id).oninput = (e) => {
-    prefs.opacity = Number(e.target.value) / 100;
-    applyPrefs();
-  };
-  $(id).onchange = () => window.wct.setPrefs({ opacity: prefs.opacity });
-}
-$("w-font").oninput = (e) => {
-  prefs.fontSize = Number(e.target.value);
+$("opacity").oninput = (e) => {
+  prefs.opacity = Number(e.target.value) / 100;
   applyPrefs();
 };
-$("w-font").onchange = () => window.wct.setPrefs({ fontSize: prefs.fontSize });
+$("opacity").onchange = () => window.wct.setPrefs({ opacity: prefs.opacity });
+
+// Settings live in their own window; it reports changes back here.
+$("gear").onclick = () => window.wct.openSettings();
+window.wct.onPrefsChanged((p) => {
+  prefs = p;
+  applyPrefs();
+});
+window.wct.onClearMessages(() => {
+  for (const item of items.values()) item.node.remove();
+  items.clear();
+  renderEmpty();
+});
 
 // Compose ---------------------------------------------------------------------
 
@@ -276,123 +274,6 @@ window.wct.getPrefs().then((p) => {
   prefs = p;
   applyPrefs();
 });
-
-// Translator settings ---------------------------------------------------------
-
-const PRESET_URLS = { openrouter: "https://openrouter.ai/api/v1", lmstudio: "http://localhost:1234/v1", custom: "" };
-const DEFAULT_MODELS = { anthropic: "claude-haiku-5-5", claudecode: "claude-haiku-5-5" };
-const KEY_HINTS = {
-  openrouter: "Créala en openrouter.ai → Keys.",
-  lmstudio: "No hace falta para LM Studio. Abre LM Studio → Developer → Start Server y carga un modelo.",
-  custom: "Solo si tu servidor la pide.",
-  anthropic:
-    "Créala en console.anthropic.com → API Keys. Si esa organización está vinculada a tu plan Max, usa sus créditos mensuales.",
-  claudecode:
-    "Sin clave: usa tu sesión de Claude Code (claude auth login) y el cupo de tu plan, el mismo que usas para programar. Tarda unos 3-4 s por mensaje.",
-};
-const HIDE_URL = new Set(["anthropic", "claudecode"]);
-const HIDE_KEY = new Set(["claudecode"]);
-const settingsBox = $("settings");
-let savedTranslator = null;
-let keyTouched = false;
-
-const currentProvider = () => $("t-provider").value;
-
-function formSettings() {
-  return {
-    provider: currentProvider(),
-    baseUrl: $("t-url").value.trim(),
-    model: $("t-model").value.trim(),
-    // undefined = keep the saved key (it is never sent back to the UI)
-    apiKey: keyTouched ? $("t-key").value.trim() : undefined,
-  };
-}
-
-function showResult(text, kind) {
-  $("t-result").className = kind ?? "";
-  $("t-result").textContent = text;
-}
-
-function syncProvider() {
-  const p = currentProvider();
-  $("t-llm").hidden = p === "google";
-  $("t-url-row").hidden = HIDE_URL.has(p);
-  $("t-key-row").hidden = HIDE_KEY.has(p);
-  const sameProvider = savedTranslator && savedTranslator.provider === p;
-  $("t-url").value = sameProvider && savedTranslator.baseUrl ? savedTranslator.baseUrl : PRESET_URLS[p] ?? "";
-  $("t-model").value = sameProvider && savedTranslator.model ? savedTranslator.model : DEFAULT_MODELS[p] ?? "";
-  keyTouched = false;
-  $("t-key").value = "";
-  $("t-key").placeholder = sameProvider && savedTranslator.hasKey ? "•••••• guardada (escribe para cambiarla)" : "sin clave";
-  $("t-key-hint").textContent = KEY_HINTS[p] ?? "";
-  $("t-models").replaceChildren();
-  showResult("");
-}
-
-function showPane(id) {
-  document.querySelectorAll(".stab").forEach((b) => b.classList.toggle("on", b.dataset.pane === id));
-  document.querySelectorAll(".pane").forEach((p) => { p.hidden = p.id !== id; });
-}
-
-async function openSettings() {
-  savedTranslator = await window.wct.getTranslator();
-  $("t-provider").value = savedTranslator.provider;
-  syncProvider();
-  applyPrefs();
-  settingsBox.classList.add("open");
-}
-
-const closeSettings = () => settingsBox.classList.remove("open");
-
-$("gear").onclick = () => (settingsBox.classList.contains("open") ? closeSettings() : openSettings());
-$("s-close").onclick = closeSettings;
-document.querySelectorAll(".stab").forEach((b) => { b.onclick = () => showPane(b.dataset.pane); });
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && settingsBox.classList.contains("open")) closeSettings();
-});
-
-$("w-ontop").onchange = (e) => savePrefs({ alwaysOnTop: e.target.checked });
-$("w-calib").onclick = () => { closeSettings(); window.wct.calibrate(); };
-$("w-dock").onclick = () => { closeSettings(); window.wct.dock(); };
-$("g-autostart").onchange = (e) => savePrefs({ autoStart: e.target.checked });
-$("g-clear").onclick = () => {
-  for (const item of items.values()) item.node.remove();
-  items.clear();
-  renderEmpty();
-  closeSettings();
-};
-$("g-quit").onclick = () => window.wct.quit();
-$("t-provider").onchange = syncProvider;
-$("t-key").oninput = () => { keyTouched = true; };
-
-$("t-load").onclick = async () => {
-  showResult("Cargando modelos…");
-  const res = await window.wct.listModels(formSettings());
-  if (!res.ok) return showResult(`No se pudo cargar la lista: ${res.error}`, "err");
-  $("t-models").replaceChildren(...res.models.map((id) => {
-    const o = document.createElement("option");
-    o.value = id;
-    return o;
-  }));
-  if (!$("t-model").value && res.models.length === 1) $("t-model").value = res.models[0];
-  showResult(`${res.models.length} modelos disponibles. Haz clic en el campo Modelo para elegir.`, "ok");
-};
-
-$("t-test").onclick = async () => {
-  showResult("Probando…");
-  const res = await window.wct.testTranslator(formSettings());
-  if (!res.ok) return showResult(`Error: ${res.error}`, "err");
-  showResult(`«${res.sample}» → «${res.text}»`, "ok");
-};
-
-$("t-save").onclick = async () => {
-  const s = formSettings();
-  if (s.provider !== "google" && !s.model) return showResult("Elige un modelo antes de guardar.", "err");
-  const res = await window.wct.setTranslator(s);
-  if (!res.ok) return showResult(`Error: ${res.error}`, "err");
-  savedTranslator = await window.wct.getTranslator();
-  showResult(`Guardado. Traduciendo con: ${res.label}`, "ok");
-};
 
 window.wct.onTranslatorChanged((label) => { $("provider-label").textContent = label; });
 window.wct.getTranslator().then((t) => { $("provider-label").textContent = t.label; });
