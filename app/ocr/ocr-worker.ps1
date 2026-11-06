@@ -1,6 +1,9 @@
 # Long-running OCR worker.
-# Captures a screen region every IntervalMs, and only when the pixels changed runs
-# Windows OCR and writes one JSON line to stdout: {"lines":["...", ...]} or {"error":"..."}.
+# Captures a screen region every IntervalMs and writes one JSON line per capture:
+#   {"panel":false}                      region does not look like the addon panel (no OCR run)
+#   {"panel":true}                       panel visible, pixels unchanged (no OCR run)
+#   {"panel":true,"lines":["...", ...]}  panel visible and changed: OCR result
+#   {"error":"..."}
 # Usage: powershell -NoProfile -ExecutionPolicy Bypass -File ocr-worker.ps1 -X 0 -Y 0 -W 500 -H 200 [-Scale 2] [-IntervalMs 700] [-Lang ""]
 param(
   [Parameter(Mandatory = $true)][int]$X,
@@ -29,6 +32,24 @@ public static class WctCapture {
     var bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb);
     using (var g = Graphics.FromImage(bmp)) { g.CopyFromScreen(x, y, 0, 0, new Size(w, h)); }
     return bmp;
+  }
+
+  // The addon panel is pure black with white/gray text; game scenery almost never is.
+  public static bool LooksLikePanel(Bitmap bmp) {
+    var rect = new Rectangle(0, 0, bmp.Width, bmp.Height);
+    var data = bmp.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+    int n = Math.Abs(data.Stride) * bmp.Height;
+    var buf = new byte[n];
+    Marshal.Copy(data.Scan0, buf, 0, n);
+    bmp.UnlockBits(data);
+    long total = 0, black = 0, gray = 0;
+    for (int i = 0; i < n; i += 8) {
+      int b = buf[i], g = buf[i + 1], r = buf[i + 2];
+      total++;
+      if (r <= 3 && g <= 3 && b <= 3) black++;
+      if (Math.Abs(r - g) <= 3 && Math.Abs(g - b) <= 3) gray++;
+    }
+    return total > 0 && black >= total * 0.5 && gray >= total * 0.98;
   }
 
   public static ulong Hash(Bitmap bmp) {
@@ -102,11 +123,18 @@ $lastHash = [UInt64]0
 while ($true) {
   try {
     $bmp = [WctCapture]::Grab($X, $Y, $W, $H)
-    $hash = [WctCapture]::Hash($bmp)
-    if ($hash -ne $lastHash) {
-      $lastHash = $hash
-      $lines = Recognize $bmp
-      Emit @{ lines = $lines }
+    if (-not [WctCapture]::LooksLikePanel($bmp)) {
+      $lastHash = [UInt64]0 # OCR again as soon as the panel comes back
+      Emit @{ panel = $false }
+    } else {
+      $hash = [WctCapture]::Hash($bmp)
+      if ($hash -ne $lastHash) {
+        $lastHash = $hash
+        $lines = Recognize $bmp
+        Emit @{ panel = $true; lines = $lines }
+      } else {
+        Emit @{ panel = $true }
+      }
     }
     $bmp.Dispose()
   } catch {

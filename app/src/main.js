@@ -9,6 +9,7 @@ import { createTracker } from "./core/tracker.js";
 import { looksSpanish } from "./core/language.js";
 import { channelTab } from "./core/channels.js";
 import { createGameWatcher } from "./core/game-watcher.js";
+import { createPresence } from "./core/presence.js";
 import { createGoogleTranslator } from "./core/translators/google.js";
 import { createCachedTranslator } from "./core/cache.js";
 
@@ -49,6 +50,8 @@ let restoreBounds = null; // bounds before "maximize"
 let tray = null;
 let watcher = null;
 let quitting = false;
+let userHidden = false; // hidden with ✕; panel detection must not re-show it
+let panelPresent = null;
 
 const send = (channel, payload) => overlay?.webContents.send(channel, payload);
 const status = (text) => send("status", text);
@@ -113,6 +116,7 @@ function startWorker() {
   ];
   const proc = spawn("powershell.exe", args, { windowsHide: true });
   worker = proc;
+  const presence = createPresence({ threshold: 3, onChange: onPanelPresence });
   send("ocr:state", "starting");
   createInterface({ input: proc.stdout }).on("line", (line) => {
     let data;
@@ -125,6 +129,8 @@ function startWorker() {
       send("ocr:state", "error");
       return status(`OCR: ${data.error}`);
     }
+    if (typeof data.panel === "boolean") presence.update(data.panel);
+    if (!("lines" in data)) return;
     const lines = Array.isArray(data.lines) ? data.lines : data.lines ? [data.lines] : [];
     send("ocr:state", "ok");
     status("");
@@ -138,6 +144,18 @@ function startWorker() {
       status(`El lector OCR se detuvo (código ${code}). Recalibra para reiniciarlo.`);
     }
   });
+}
+
+// The addon panel disappeared (addon disabled, /wct, Alt+Z, loading screen):
+// hide and wait. It came back: show again unless the user hid the window.
+function onPanelPresence(present) {
+  panelPresent = present;
+  if (present) {
+    if (!userHidden) overlay?.showInactive();
+  } else {
+    overlay?.hide();
+  }
+  updateTray();
 }
 
 // Windows -----------------------------------------------------------------
@@ -309,8 +327,9 @@ function registerShortcuts() {
 }
 
 function onGameStart() {
+  userHidden = false;
   registerShortcuts();
-  overlay?.showInactive();
+  // With a calibrated region, panel detection decides when to show the window.
   if (config.region) startWorker();
   else openCalibration();
   updateTray();
@@ -320,6 +339,7 @@ function onGameExit() {
   globalShortcut.unregisterAll();
   stopWorker();
   overlay?.hide();
+  panelPresent = null;
   status("Esperando a que abras WoW…");
   send("ocr:state", "idle");
   updateTray();
@@ -344,13 +364,19 @@ function applyAutoStart() {
 }
 
 function showOverlay() {
+  userHidden = false;
   overlay?.show();
 }
 
 function updateTray() {
   if (!tray) return;
   const p = prefs();
-  tray.setToolTip(`WoW Chat Translator — ${watcher?.running ? "WoW abierto" : "esperando a WoW"}`);
+  const state = !watcher?.running
+    ? "esperando a WoW"
+    : panelPresent === false
+      ? "panel del addon no visible, en espera"
+      : "WoW abierto";
+  tray.setToolTip(`WoW Chat Translator — ${state}`);
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: "Mostrar ventana", click: showOverlay },
@@ -382,7 +408,10 @@ function createTray() {
 
 ipcMain.on("calib:cancel", () => calibration?.close());
 ipcMain.on("app:calibrate", () => openCalibration());
-ipcMain.on("app:close", () => overlay?.hide());
+ipcMain.on("app:close", () => {
+  userHidden = true;
+  overlay?.hide();
+});
 ipcMain.on("win:minimize", () => overlay?.minimize());
 ipcMain.on("win:maximize", () => toggleMaximize());
 ipcMain.on("win:dock", () => dockOverPanel());

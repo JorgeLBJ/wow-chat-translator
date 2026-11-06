@@ -6,6 +6,7 @@ import { createGoogleTranslator } from "../src/core/translators/google.js";
 import { createCachedTranslator } from "../src/core/cache.js";
 import { channelTab } from "../src/core/channels.js";
 import { createGameWatcher } from "../src/core/game-watcher.js";
+import { createPresence } from "../src/core/presence.js";
 
 describe("parseLines", () => {
   it("parses OCR lines in the format NNN Channel Player Name: message", () => {
@@ -194,5 +195,40 @@ describe("createGameWatcher", () => {
     await w.check();
     await w.check();
     expect(onExit).not.toHaveBeenCalled();
+  });
+});
+
+describe("createPresence", () => {
+  const setup = () => {
+    const onChange = vi.fn();
+    return { p: createPresence({ threshold: 3, onChange }), onChange };
+  };
+
+  it("reports the panel as gone only after several consecutive misses", () => {
+    const { p, onChange } = setup();
+    p.update(true);
+    p.update(false);
+    p.update(false);
+    expect(onChange).toHaveBeenLastCalledWith(true);
+    p.update(false);
+    expect(onChange).toHaveBeenLastCalledWith(false);
+  });
+
+  it("ignores a single flicker", () => {
+    const { p, onChange } = setup();
+    p.update(true);
+    p.update(false);
+    p.update(true);
+    p.update(false);
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith(true);
+  });
+
+  it("reports the panel back after several consecutive hits", () => {
+    const { p, onChange } = setup();
+    p.update(true);
+    for (let i = 0; i < 3; i++) p.update(false);
+    for (let i = 0; i < 3; i++) p.update(true);
+    expect(onChange.mock.calls.map((c) => c[0])).toEqual([true, false, true]);
   });
 });
