@@ -5,6 +5,7 @@ import { looksSpanish } from "../src/core/language.js";
 import { createGoogleTranslator } from "../src/core/translators/google.js";
 import { createCachedTranslator } from "../src/core/cache.js";
 import { channelTab } from "../src/core/channels.js";
+import { createGameWatcher } from "../src/core/game-watcher.js";
 
 describe("parseLines", () => {
   it("parses OCR lines in the format NNN Channel Player Name: message", () => {
@@ -151,4 +152,39 @@ describe("channelTab", () => {
     ["Guild", "guild"], ["Officer", "guild"], ["Party", "group"], ["Raid", "group"],
     ["Instance", "group"], ["Whisper", "whisper"], ["Say", null], ["LookingForGroup", null],
   ])("%s -> %s", (channel, tab) => expect(channelTab(channel)).toBe(tab));
+});
+
+describe("createGameWatcher", () => {
+  const run = async (states) => {
+    const onExit = vi.fn();
+    let i = 0;
+    const w = createGameWatcher({ isRunning: async () => states[Math.min(i++, states.length - 1)], onExit });
+    for (let k = 0; k < states.length; k++) await w.check();
+    return onExit;
+  };
+
+  it("fires onExit once the game was seen running and then stops", async () => {
+    expect(await run([true, true, false])).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not fire while the game has not started yet", async () => {
+    expect(await run([false, false, false])).not.toHaveBeenCalled();
+  });
+
+  it("waits for the game to start before watching for exit", async () => {
+    expect(await run([false, true, false])).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores probe errors instead of treating them as an exit", async () => {
+    const onExit = vi.fn();
+    const answers = [true, new Error("tasklist failed")];
+    let i = 0;
+    const w = createGameWatcher({
+      isRunning: async () => { const a = answers[i++]; if (a instanceof Error) throw a; return a; },
+      onExit,
+    });
+    await w.check();
+    await w.check();
+    expect(onExit).not.toHaveBeenCalled();
+  });
 });

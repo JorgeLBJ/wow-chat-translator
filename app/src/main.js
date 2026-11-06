@@ -1,5 +1,5 @@
 import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, screen } from "electron";
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import fs from "node:fs";
 import path from "node:path";
@@ -8,12 +8,15 @@ import { parseLines } from "./core/parser.js";
 import { createTracker } from "./core/tracker.js";
 import { looksSpanish } from "./core/language.js";
 import { channelTab } from "./core/channels.js";
+import { createGameWatcher } from "./core/game-watcher.js";
 import { createGoogleTranslator } from "./core/translators/google.js";
 import { createCachedTranslator } from "./core/cache.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const WORKER = path.join(here, "..", "ocr", "ocr-worker.ps1");
 const TARGET_LANG = "es";
+const GAME_EXE = "Wow.exe";
+const GAME_CHECK_MS = 5000;
 const DEFAULT_PREFS = { fontSize: 13, opacity: 0.94, alwaysOnTop: true };
 
 // Config -----------------------------------------------------------------
@@ -256,6 +259,25 @@ function focusCompose() {
   send("compose:focus");
 }
 
+// Game watcher: quit when WoW closes ---------------------------------------
+
+function isGameRunning() {
+  return new Promise((resolve, reject) => {
+    execFile(
+      "tasklist",
+      ["/FI", `IMAGENAME eq ${GAME_EXE}`, "/NH", "/FO", "CSV"],
+      { windowsHide: true },
+      (err, stdout) => (err ? reject(err) : resolve(stdout.toLowerCase().includes(`"${GAME_EXE.toLowerCase()}"`))),
+    );
+  });
+}
+
+function startGameWatcher() {
+  const watcher = createGameWatcher({ isRunning: isGameRunning, onExit: () => app.quit() });
+  watcher.check();
+  setInterval(() => watcher.check(), GAME_CHECK_MS);
+}
+
 // IPC ---------------------------------------------------------------------
 
 ipcMain.on("calib:cancel", () => calibration?.close());
@@ -297,6 +319,7 @@ ipcMain.handle("compose:translate", async (_e, { text, lang }) => {
 app.whenReady().then(() => {
   config = loadConfig();
   createOverlay();
+  startGameWatcher();
   globalShortcut.register("CommandOrControl+Shift+T", () => send("view:toggle"));
   globalShortcut.register("CommandOrControl+Shift+R", () => openCalibration());
   globalShortcut.register("CommandOrControl+Shift+Enter", () => focusCompose());
