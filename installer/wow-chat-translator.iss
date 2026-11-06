@@ -5,9 +5,10 @@
 ;   SourceExe     path of the release exe to package
 ;   AppMutexName  single-instance mutex the app creates (native/src/app/instance.rs)
 ;   RunValueName  HKCU Run value name of "Iniciar con Windows" (overridden only in tests)
+;   AppGuid       installer identity (overridden only in tests, so they never touch a real install)
 
 #define AppName "WoW Chat Translator"
-#define AppVersion "0.2.1"
+#define AppVersion "0.2.2"
 #define AppPublisher "Jorge Luis Bustamante Jara"
 #define AppExeName "wow-chat-translator.exe"
 #ifndef SourceExe
@@ -22,9 +23,14 @@
 #endif
 ; User config folder (native/src/app/win.rs). Kept by default on uninstall.
 #define ConfigDirName "wow-chat-translator-native"
+#ifndef AppGuid
+  #define AppGuid "6FE0FF5C-CEFC-4E1C-A0D1-93EABDD9A45A"
+#endif
 
 [Setup]
-AppId={{6FE0FF5C-CEFC-4E1C-A0D1-93EABDD9A45A}
+AppId={{{#AppGuid}}
+; The autostart task is offered only on a fresh install (see IsFreshInstall).
+UsePreviousTasks=no
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppVerName={#AppName} {#AppVersion}
@@ -68,9 +74,14 @@ english.AppRunning={#AppName} is running. Close it and continue?
 spanish.AppStillRunning=No se pudo cerrar {#AppName}. Ciérralo desde el icono de la bandeja y vuelve a intentarlo.
 english.AppStillRunning=Could not close {#AppName}. Quit it from its tray icon and try again.
 spanish.DeleteConfig=¿Borrar también tu configuración (%1)?%n%nSi vas a reinstalar, elige No para conservarla.
+spanish.Autostart=Iniciar con Windows (arranca oculta y aparece sola al abrir WoW)
+english.Autostart=Start with Windows (starts hidden and shows up when WoW opens)
+spanish.Options=Opciones:
+english.Options=Options:
 english.DeleteConfig=Also delete your settings (%1)?%n%nChoose No to keep them if you plan to reinstall.
 
 [Tasks]
+Name: "autostart"; Description: "{cm:Autostart}"; GroupDescription: "{cm:Options}"; Check: IsFreshInstall
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
@@ -82,12 +93,20 @@ Source: "..\THIRD_PARTY_NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: desktopicon
 
+; Same command line the app writes (native/src/app/autostart.rs: "<exe>" --hidden).
+[Registry]
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "{#RunValueName}"; ValueData: """{app}\{#AppExeName}"" --hidden"; Tasks: autostart
+
 [Run]
 Filename: "{app}\{#AppExeName}"; Description: "{cm:LaunchApp}"; Flags: postinstall nowait skipifsilent
 
 [Code]
 const
   RunKey = 'Software\Microsoft\Windows\CurrentVersion\Run';
+
+var
+  { Set in InitializeSetup, before the install writes its uninstall entry. }
+  FreshInstall: Boolean;
 
 function AppIsRunning(): Boolean;
 begin
@@ -132,8 +151,11 @@ begin
     SuppressibleMsgBox(CustomMessage('AppStillRunning'), mbError, MB_OK, IDOK);
 end;
 
+function IsFreshInstall(): Boolean; forward;
+
 function InitializeSetup(): Boolean;
 begin
+  FreshInstall := IsFreshInstall();
   Result := CloseRunningApp();
 end;
 
@@ -157,6 +179,23 @@ begin
   end
   else
     Log('Autostart value kept (another install): ' + Value);
+end;
+
+{ True when no earlier version is installed (its uninstall entry is missing). Used as
+  the Check of the "autostart" task, which is evaluated before any file is copied. }
+function IsFreshInstall(): Boolean;
+begin
+  Result := not RegKeyExists(HKCU,
+    'Software\Microsoft\Windows\CurrentVersion\Uninstall\{' + '{#AppGuid}' + '}_is1');
+end;
+
+{ "Iniciar con Windows" is offered (checked) only on a fresh install: unchecked there
+  means "don't start with Windows". An upgrade has no such task, so [Registry] writes
+  nothing and nothing is removed: the choice made in the app (Ajustes or tray) is kept. }
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if (CurStep = ssPostInstall) and FreshInstall and not WizardIsTaskSelected('autostart') then
+    RemoveAutostartIfOurs();
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
