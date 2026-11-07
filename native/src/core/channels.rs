@@ -47,3 +47,48 @@ pub fn channel_tab(channel: &str) -> Option<&'static str> {
         _ => None,
     }
 }
+
+/// A word of a log line drawn in a highlight color, like the game does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Highlight {
+    /// "online", "joins".
+    Good,
+    /// "offline", "leaves".
+    Bad,
+}
+
+fn highlight_of(word: &str) -> Option<Highlight> {
+    match word.to_lowercase().as_str() {
+        "online" | "joins" => Some(Highlight::Good),
+        "offline" | "leaves" => Some(Highlight::Bad),
+        _ => None,
+    }
+}
+
+/// Splits a log line into spans, marking the whole words "online"/"joins" (good) and
+/// "offline"/"leaves" (bad), any case. A line without them is one plain span.
+pub fn log_highlights(text: &str) -> Vec<(String, Option<Highlight>)> {
+    let mut spans: Vec<(String, Option<Highlight>)> = Vec::new();
+    let mut plain = String::new();
+    let mut rest = text;
+    while let Some(start) = rest.find(|c: char| c.is_alphabetic()) {
+        plain.push_str(&rest[..start]);
+        let word_len = rest[start..].find(|c: char| !c.is_alphabetic()).unwrap_or(rest.len() - start);
+        let word = &rest[start..start + word_len];
+        match highlight_of(word) {
+            Some(h) => {
+                if !plain.is_empty() {
+                    spans.push((std::mem::take(&mut plain), None));
+                }
+                spans.push((word.to_string(), Some(h)));
+            }
+            None => plain.push_str(word),
+        }
+        rest = &rest[start + word_len..];
+    }
+    plain.push_str(rest);
+    if !plain.is_empty() {
+        spans.push((plain, None));
+    }
+    spans
+}

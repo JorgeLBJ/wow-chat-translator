@@ -12,7 +12,7 @@ use eframe::egui::{
 };
 use egui_twemoji::EmojiLabel;
 
-use crate::core::channels::log_label;
+use crate::core::channels::{log_highlights, log_label};
 use crate::core::item_tips::{link_segments, ItemTooltip, ItemTooltipCache, Segment, TipLine};
 use crate::core::links::LinkRef;
 use crate::core::pipeline::{OverlayItem, Status, UiEvent};
@@ -23,7 +23,7 @@ use super::compose::{self, copied_message, failed_message, translate_outgoing, O
 use super::messages::{badge, can_translate, flip_label, row_mode, shows_translation, BadgeKind, Mode, Row, Tab};
 use super::settings::{self, SettingsState};
 use super::shared::Shared;
-use super::style::{self, channel_label, class_color, item_quality_color, tab_color};
+use super::style::{self, channel_label, class_color, item_quality_color, log_highlight_color, log_text_color, tab_color};
 use super::{widgets, win};
 
 const BOUNDS_SAVE_DELAY: Duration = Duration::from_millis(600);
@@ -166,6 +166,9 @@ impl OverlayApp {
                             ("*Reputation", "", "Reputación con Ventormenta aumentada en 25."),
                             ("*NPC", "Guardia de Ventormenta", "¡Mantente alerta, ciudadano!"),
                             ("*System", "", "Ya no estás ausente."),
+                            ("*System", "", "Brannok has gone offline."),
+                            ("*System", "", "[Selwyn] has come online."),
+                            ("*Emote", "", "You cheer at Selwyn."),
                             ("*Addon", "", "Zygor Guides Viewer: 377 guides are loaded."),
                             ("*Addon", "", "Zygor Guides Viewer: 377 guides are loaded."),
                             ("*Addon", "", "Zygor Guides Viewer: 377 guides are loaded."),
@@ -843,7 +846,10 @@ fn message_row(
                         chip(ui, &b.text, FontId::proportional(fs * 0.72), fg, bg, vec2(4.0, 0.0), 3, body_h, Sense::hover());
                     }
                     let text = if show_t { item.translated.as_deref().unwrap_or("") } else { &item.original };
-                    let color = if item.status == Status::Pending { style::TEXT.gamma_multiply(0.55) } else { style::TEXT };
+                    // Log lines use the game's chat color for their kind (system yellow, emotes
+                    // orange, loot green...); everything else the normal text color.
+                    let base = log_text_color(&item.channel).unwrap_or(style::TEXT);
+                    let color = if item.status == Status::Pending { base.gamma_multiply(0.55) } else { base };
                     let lead = if log.is_some() && item.player.is_empty() { "" } else { ": " };
                     match tips.and_then(|tips| item_segments(text, &item.links).map(|segs| (tips, segs))) {
                         Some((tips, segs)) => {
@@ -871,6 +877,16 @@ fn message_row(
                                         }
                                     }
                                 }
+                            }
+                        }
+                        None if log.is_some() => {
+                            // "online"/"joins" in green, "offline"/"leaves" in red, like the game.
+                            if !lead.is_empty() {
+                                EmojiLabel::new(RichText::new(lead).color(color)).show(ui);
+                            }
+                            for (span, h) in log_highlights(text) {
+                                let c = h.map_or(color, log_highlight_color);
+                                EmojiLabel::new(RichText::new(span).color(c)).show(ui);
                             }
                         }
                         None => {

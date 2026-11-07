@@ -3,7 +3,7 @@
 
 use std::cell::{Cell, RefCell};
 
-use wow_chat_translator::core::channels::{channel_tab, is_log_channel, log_label};
+use wow_chat_translator::core::channels::{channel_tab, is_log_channel, log_highlights, log_label, Highlight};
 use wow_chat_translator::core::emoji::replace_shortcodes;
 use wow_chat_translator::core::language::looks_spanish;
 use wow_chat_translator::core::links::{marked_link_refs, only_links, protect_marked_links, restore_links, strip_link_markers, LinkRef};
@@ -835,4 +835,23 @@ fn pipeline_items_still_carry_their_link_refs() {
     let UiEvent::Add(item) = &p.take_events()[0] else { panic!("add") };
     assert_eq!(item.links, vec![item_ref("[Arcanite Bar]", 12360)]);
     assert_eq!(item.original, "wts [Arcanite Bar] cheap");
+}
+
+#[test]
+fn log_highlights_mark_online_offline_joins_and_leaves() {
+    let spans = log_highlights("Klvn Wlk has gone offline.");
+    assert_eq!(
+        spans,
+        vec![("Klvn Wlk has gone ".to_string(), None), ("offline".to_string(), Some(Highlight::Bad)), (".".to_string(), None)]
+    );
+    let spans = log_highlights("[Sojeh Montbell] has come online.");
+    assert_eq!(spans[1], ("online".to_string(), Some(Highlight::Good)));
+    let spans = log_highlights("Caerne Anshe joins the party.");
+    assert_eq!(spans[1], ("joins".to_string(), Some(Highlight::Good)));
+    let spans = log_highlights("Caerne Anshe leaves the party.");
+    assert_eq!(spans[1], ("leaves".to_string(), Some(Highlight::Bad)));
+    // Whole words only, any case; plain lines are one span.
+    assert_eq!(log_highlights("Onlineshop rejoins"), vec![("Onlineshop rejoins".to_string(), None)]);
+    assert_eq!(log_highlights("Is OFFLINE")[1], ("OFFLINE".to_string(), Some(Highlight::Bad)));
+    assert_eq!(log_highlights("Loot threshold set to Uncommon."), vec![("Loot threshold set to Uncommon.".to_string(), None)]);
 }

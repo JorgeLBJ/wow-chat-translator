@@ -153,3 +153,28 @@ pub fn translator_label(settings: &TranslatorSettings) -> String {
         format!("{} · {}", provider_label(&settings.provider), settings.model)
     }
 }
+
+/// The game's default chat color for a log line (ChatTypeInfo), `None` for player chat
+/// and other addons' prints, which keep the normal text color.
+pub fn log_text_color(channel: &str) -> Option<Color32> {
+    let key = channel.strip_prefix('*')?.to_lowercase();
+    Some(match key.as_str() {
+        "system" | "money" | "achievement" => hex(0xffff00),
+        "emote" => hex(0xff8040),
+        "loot" | "currency" => hex(0x00aa00),
+        "xp" => hex(0x6f6fff),
+        "reputation" => hex(0x8080ff),
+        "skill" => hex(0x5555ff),
+        "npc" => hex(0xffff9f),
+        "bossemote" => hex(0xffdd00),
+        _ => return None,
+    })
+}
+
+/// Color of a highlighted word in a log line ("online" green, "offline" red).
+pub fn log_highlight_color(h: crate::core::channels::Highlight) -> Color32 {
+    match h {
+        crate::core::channels::Highlight::Good => hex(0x40ff40),
+        crate::core::channels::Highlight::Bad => hex(0xff4040),
+    }
+}

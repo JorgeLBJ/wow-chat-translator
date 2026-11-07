@@ -5,7 +5,7 @@ use wow_chat_translator::app::debug_log::{iso_utc, DebugLog};
 use wow_chat_translator::app::game_watcher::{GameChange, GameWatcher};
 use wow_chat_translator::app::messages::{badge, can_translate, flip_label, row_mode, shows_translation, BadgeKind, MessageList, Mode, Tab, MAX_ITEMS};
 use wow_chat_translator::app::presence::PresenceGate;
-use wow_chat_translator::app::style::{channel_label, class_color, hhmm, item_quality_color, tab_color, translator_label, ReaderState, LINK_GOLD};
+use wow_chat_translator::app::style::{channel_label, class_color, hhmm, item_quality_color, log_highlight_color, log_text_color, tab_color, translator_label, ReaderState, LINK_GOLD};
 use wow_chat_translator::core::pipeline::{ItemPatch, OverlayItem, Status, UiEvent};
 use wow_chat_translator::core::prefs::TranslatorSettings;
 
@@ -773,4 +773,19 @@ fn item_links_use_the_wow_quality_colors() {
     assert_eq!(LINK_GOLD.to_hex(), "#ffd100ff");
     // Existing colors unchanged.
     assert_eq!(class_color(Some("MAGE")).to_hex(), "#3fc7ebff");
+}
+
+#[test]
+fn log_lines_use_the_game_chat_colors() {
+    let hex = |c: &str| log_text_color(c).map(|c| c.to_hex());
+    assert_eq!(hex("*System").as_deref(), Some("#ffff00ff"));
+    assert_eq!(hex("*Emote").as_deref(), Some("#ff8040ff"));
+    assert_eq!(hex("*Loot").as_deref(), Some("#00aa00ff"));
+    assert_eq!(hex("*Reputation").as_deref(), Some("#8080ffff"));
+    assert_eq!(hex("*NPC").as_deref(), Some("#ffff9fff"));
+    // Addon prints and player chat keep the default text color.
+    assert_eq!(hex("*Addon"), None);
+    assert_eq!(hex("Trade"), None);
+    assert_eq!(log_highlight_color(wow_chat_translator::core::channels::Highlight::Good).to_hex(), "#40ff40ff");
+    assert_eq!(log_highlight_color(wow_chat_translator::core::channels::Highlight::Bad).to_hex(), "#ff4040ff");
 }
