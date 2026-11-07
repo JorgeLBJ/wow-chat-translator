@@ -220,8 +220,11 @@ fn draw(ctx: &egui::Context, shared: &Arc<Shared>, state: &Arc<Mutex<SettingsSta
     // `.sheet-head` is a drag region: everywhere but the ✕ and the tabs moves the window.
     widgets::caption_drag(ctx, Id::new("settings-caption"), head.response.rect, head.inner, None);
     egui::CentralPanel::default()
-        .frame(Frame::new().fill(SHEET_BG).inner_margin(Margin { left: 14, right: 14, top: 8, bottom: 12 }))
+        .frame(Frame::new().fill(SHEET_BG).inner_margin(Margin { left: 14, right: 6, top: 8, bottom: 12 }))
         .show(ctx, |ui| {
+            // A solid bar takes its own column, so it never sits on top of the switches.
+            ui.spacing_mut().scroll = egui::style::ScrollStyle::solid();
+            ui.spacing_mut().scroll.bar_inner_margin = 8.0;
             ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 4.0;
                 let pane = lock(state).pane;

@@ -401,8 +401,11 @@ pub fn show_first_run(ctx: &egui::Context, shared: &Arc<Shared>, icon: Option<Ar
             });
         widgets::caption_drag(ctx, Id::new("addon-caption"), head.response.rect, head.inner, None);
         egui::CentralPanel::default()
-            .frame(Frame::new().fill(SHEET_BG).inner_margin(Margin { left: 14, right: 14, top: 10, bottom: 12 }))
+            .frame(Frame::new().fill(SHEET_BG).inner_margin(Margin { left: 14, right: 6, top: 10, bottom: 12 }))
             .show(ctx, |ui| {
+                // A solid bar takes its own column, so it never sits on top of the switches.
+                ui.spacing_mut().scroll = egui::style::ScrollStyle::solid();
+                ui.spacing_mut().scroll.bar_inner_margin = 8.0;
                 ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 4.0;
                     ui.add(
