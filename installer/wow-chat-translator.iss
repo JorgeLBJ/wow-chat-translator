@@ -8,7 +8,7 @@
 ;   AppGuid       installer identity (overridden only in tests, so they never touch a real install)
 
 #define AppName "WoW Chat Translator"
-#define AppVersion "0.2.3"
+#define AppVersion "0.3.0"
 #define AppPublisher "Jorge Luis Bustamante Jara"
 #define AppExeName "wow-chat-translator.exe"
 #ifndef SourceExe
