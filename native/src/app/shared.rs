@@ -12,6 +12,8 @@ use eframe::egui;
 use crate::core::item_tips::{split_item_frames, ItemTooltipCache};
 use crate::core::pipeline::{filter_log_messages, Job, Pipeline, Translation, Translator, UiEvent};
 use crate::core::prefs::{self, Config, ItemTooltips};
+use crate::core::wowhead::{self, WowheadCache};
+use crate::translators::http::UreqClient;
 use crate::strip::Message;
 
 use super::addon_panel::AddonPanel;
@@ -30,6 +32,8 @@ pub struct Model {
     pub list: MessageList,
     /// Item tooltips the addon sent (`*Item` frames), shown on hover when enabled.
     pub tips: ItemTooltipCache,
+    /// Items fetched from Wowhead (failures too), shown when that source is selected.
+    pub wowhead: WowheadCache,
 }
 
 impl Model {
@@ -100,7 +104,7 @@ impl Shared {
         let mut pipeline = Pipeline::new(TARGET_LANG);
         pipeline.set_paused(config.prefs.translation_paused);
         Self {
-            model: Mutex::new(Model { pipeline, list: MessageList::default(), tips: ItemTooltipCache::default() }),
+            model: Mutex::new(Model { pipeline, list: MessageList::default(), tips: ItemTooltipCache::default(), wowhead: WowheadCache::default() }),
             config: Mutex::new(config),
             config_path,
             log,
@@ -247,6 +251,29 @@ impl Shared {
         self.save_config();
         self.log.write(&format!("item tooltips {}", value.as_str()));
         self.repaint();
+    }
+
+    /// Starts fetching an item from Wowhead on a background thread, unless it is
+    /// already known, loading, failed a moment ago, or too many requests are running.
+    pub fn request_wowhead(self: &Arc<Self>, id: u64) {
+        if !self.model().wowhead.begin(id, Instant::now()) {
+            return;
+        }
+        let shared = self.clone();
+        let spawned = std::thread::Builder::new().name(format!("wowhead-{id}")).spawn(move || {
+            let flavor = super::addon_panel::played_flavor(&shared);
+            let env = wowhead::data_env(flavor.as_ref().map(|f| f.folder.as_str()), flavor.as_ref().map_or("", |f| f.name.as_str()));
+            let result = wowhead::fetch(&UreqClient::new(), id, env);
+            match &result {
+                Ok(_) => shared.log.write(&format!("wowhead item {id} env={env} ok")),
+                Err(e) => shared.log.write(&format!("wowhead item {id} env={env} error {e}")),
+            }
+            shared.model().wowhead.finish(id, result, Instant::now());
+            shared.repaint();
+        });
+        if let Err(e) = spawned {
+            self.model().wowhead.finish(id, Err(e.to_string()), Instant::now());
+        }
     }
 
     pub fn clear_messages(&self) {

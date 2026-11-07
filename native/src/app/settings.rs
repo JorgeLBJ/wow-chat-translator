@@ -37,7 +37,7 @@ const OK: Color32 = Color32::from_rgb(0x86, 0xef, 0xac);
 const ERR: Color32 = Color32::from_rgb(0xfc, 0xa5, 0xa5);
 const CAPTURE_NOTE: &str = "Útil para streams: la ventana no saldrá en capturas ni grabaciones.";
 const LOG_NOTE: &str = "Muestra también botín, oro, sistema, logros y PNJ en la pestaña Registro (sin traducir).";
-const ITEM_TIPS_NOTE: &str = "Al pasar el ratón por un objeto enlazado muestra sus datos. «WoW (addon)» usa el texto del propio juego.";
+const ITEM_TIPS_NOTE: &str = "Al pasar el ratón por un objeto enlazado muestra sus datos. «WoW (addon)» usa el texto del propio juego; «Wowhead (internet)» envía el id del objeto a wowhead.com.";
 const STRIP_NOTE: &str = "El addon envía el chat como una franja diminuta de colores en la esquina superior izquierda de WoW. No pongas ninguna ventana encima de esa esquina.";
 
 pub fn viewport_id() -> ViewportId {

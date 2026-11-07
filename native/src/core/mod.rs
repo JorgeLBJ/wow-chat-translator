@@ -8,3 +8,4 @@ pub mod language;
 pub mod links;
 pub mod pipeline;
 pub mod prefs;
+pub mod wowhead;

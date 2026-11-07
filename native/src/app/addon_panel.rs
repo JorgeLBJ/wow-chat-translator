@@ -178,12 +178,18 @@ pub fn dev_open(shared: &Shared) {
 /// The addon in the flavor being played (else the last played) is missing or older
 /// than the bundled one. A development link never counts.
 pub fn stale_addon(shared: &Shared) -> bool {
+    played_flavor(shared).is_some_and(|f| needs_update(&f.addon, VERSION))
+}
+
+/// The flavor being played, else the last played one (reads folders and the process
+/// list: call it off the UI thread).
+pub fn played_flavor(shared: &Shared) -> Option<Flavor> {
     let extra = shared.addon().prefs.extra_folders.clone();
     let d = detect(&WindowsSystem, &extra);
     let running: Vec<String> =
         WindowsSystem.running_wow_exes().iter().filter_map(|e| e.parent().map(normalize_key)).collect();
-    let flavor = d.flavors().find(|f| running.contains(&normalize_key(&f.path))).or_else(|| d.last_played_flavor());
-    flavor.is_some_and(|f| needs_update(&f.addon, VERSION))
+    let flavor = d.flavors().find(|f| running.contains(&normalize_key(&f.path))).or_else(|| d.last_played_flavor()).cloned();
+    flavor
 }
 
 fn status_of(addon: &AddonState) -> (String, Color32) {

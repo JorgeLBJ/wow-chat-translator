@@ -771,6 +771,23 @@ fn item_tooltips_pref_defaults_off_and_round_trips() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+#[test]
+fn item_tooltips_pref_keeps_the_wowhead_source() {
+    let dir = scratch("itemtips-wowhead");
+    let path = dir.join("config.json");
+    let mut c = Config::default();
+    c.prefs.item_tooltips = ItemTooltips::Wowhead;
+    prefs::save(&path, &c).unwrap();
+    let raw = std::fs::read_to_string(&path).unwrap();
+    assert!(raw.contains("\"itemTooltips\": \"wowhead\""), "{raw}");
+    assert_eq!(prefs::load(&path).prefs.item_tooltips, ItemTooltips::Wowhead);
+    assert_eq!(ItemTooltips::ALL, [ItemTooltips::Off, ItemTooltips::Addon, ItemTooltips::Wowhead]);
+    assert_eq!(ItemTooltips::Wowhead.label(), "Wowhead (internet)");
+    assert_eq!(ItemTooltips::Addon.label(), "WoW (addon)", "existing labels unchanged");
+    assert_eq!(ItemTooltips::from("Wowhead".to_string()), ItemTooltips::Off, "values are exact: unknown means off");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 fn item_ref(name: &str, id: u64) -> LinkRef {
     LinkRef { name: name.into(), kind: "item".into(), id }
 }

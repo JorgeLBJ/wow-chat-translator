@@ -17,6 +17,7 @@ use crate::core::item_tips::{link_segments, ItemTooltip, ItemTooltipCache, Segme
 use crate::core::links::LinkRef;
 use crate::core::pipeline::{OverlayItem, Status, UiEvent};
 use crate::core::prefs::{Bounds, ItemTooltips};
+use crate::core::wowhead::{panel_view, PanelView, WowheadCache, WowheadState};
 
 use super::compose::{self, copied_message, failed_message, translate_outgoing, OUT_LANGS};
 use super::messages::{badge, can_translate, flip_label, row_mode, shows_translation, BadgeKind, Mode, Row, Tab};
@@ -155,6 +156,8 @@ impl OverlayApp {
                     }
                     // Its tooltip, as the addon would have sent it.
                     model.tips.insert(DEV_ITEM_ID, dev_item_tooltip());
+                    // And as Wowhead would answer, so screenshots never go online.
+                    model.wowhead.insert_ready(DEV_ITEM_ID, dev_item_tooltip());
                     // With the log option on, a few Registro lines too.
                     if self.shared.config().prefs.show_log {
                         let log = [
@@ -339,10 +342,12 @@ impl OverlayApp {
     fn messages(&mut self, ui: &mut Ui, font_size: f32) {
         let mut clicked = None;
         let mut flip = None;
+        let wanted = Cell::new(None);
         {
             let item_tips = self.shared.config().prefs.item_tooltips;
             let model = self.shared.model();
-            let tips = (item_tips == ItemTooltips::Addon).then_some(&model.tips);
+            let tips = (item_tips != ItemTooltips::Off)
+                .then_some(TipSources { mode: item_tips, addon: &model.tips, wowhead: &model.wowhead, wanted: &wanted });
             // Dragging over the list selects text (like Electron), it does not scroll it.
             let mut area = egui::ScrollArea::vertical()
                 .stick_to_bottom(true)
@@ -426,6 +431,10 @@ impl OverlayApp {
                     });
                 }
             });
+        }
+        // A hovered item without Wowhead data yet (the model lock is released by now).
+        if let Some(id) = wanted.get() {
+            self.shared.request_wowhead(id);
         }
         if let Some(id) = flip {
             if !self.flipped.remove(&id) {
@@ -784,7 +793,7 @@ fn message_row(
     mode: Mode,
     fs: f32,
     highlight: bool,
-    tips: Option<&ItemTooltipCache>,
+    tips: Option<TipSources<'_>>,
     force_tip: bool,
 ) -> Response {
     let item = &row.item;
@@ -845,14 +854,17 @@ fn message_row(
                                         EmojiLabel::new(RichText::new(t).color(color)).show(ui);
                                     }
                                     Segment::Link(name, link) => {
-                                        let tip = tips.get(link.id);
-                                        let c = item_quality_color(tip.and_then(|t| t.quality));
+                                        let view = tips.view(link.id);
+                                        let c = item_quality_color(view.and_then(|v| v.tip()).and_then(|t| t.quality));
                                         let resp = ui.add(egui::Label::new(RichText::new(&name).color(c)));
                                         // The row's own click area covers the text, so
                                         // hover is read from the pointer position.
                                         if std::mem::take(&mut force) || ui.rect_contains_pointer(resp.rect) {
                                             link_hovered.set(true);
-                                            item_panel(ui, &resp, &name, tip, fs);
+                                            tips.hovered(ui, link.id);
+                                            if let Some(view) = view {
+                                                item_panel(ui, &resp, &name, view, fs);
+                                            }
                                         }
                                     }
                                 }
@@ -890,6 +902,39 @@ fn message_row(
     }
 }
 
+/// The item data sources of the hover panel for one frame.
+#[derive(Clone, Copy)]
+struct TipSources<'a> {
+    mode: ItemTooltips,
+    addon: &'a ItemTooltipCache,
+    wowhead: &'a WowheadCache,
+    /// The hovered item to fetch from Wowhead after the frame's model lock is released.
+    wanted: &'a Cell<Option<u64>>,
+}
+
+impl<'a> TipSources<'a> {
+    fn view(&self, id: u64) -> Option<PanelView<'a>> {
+        panel_view(self.mode, self.addon.get(id), self.wowhead.get(id))
+    }
+
+    /// Marks a hovered item for fetching when Wowhead is the source and has no answer
+    /// yet; the answer repaints, and so does a short timer in case the request could not
+    /// start this frame (too many at once).
+    fn hovered(&self, ui: &Ui, id: u64) {
+        if self.mode != ItemTooltips::Wowhead {
+            return;
+        }
+        match self.wowhead.get(id) {
+            None => {
+                self.wanted.set(Some(id));
+                ui.ctx().request_repaint_after(Duration::from_millis(300));
+            }
+            Some(WowheadState::Failed { .. }) => self.wanted.set(Some(id)),
+            Some(WowheadState::Loading | WowheadState::Ready(_)) => {}
+        }
+    }
+}
+
 /// The text split at its item links, or `None` when it has no item link to draw apart
 /// (the row is then drawn exactly as without item data).
 fn item_segments(text: &str, links: &[LinkRef]) -> Option<Vec<Segment>> {
@@ -904,16 +949,20 @@ fn item_segments(text: &str, links: &[LinkRef]) -> Option<Vec<Segment>> {
 const TIP_LINE: Color32 = Color32::from_rgb(0xdd, 0xdd, 0xdd);
 
 /// The small item panel under a hovered item link: the name in its quality color, then
-/// the game's tooltip lines (right column right-aligned). Without data yet, the name
-/// and "Cargando datos…" (the addon sends it with the next frames).
-fn item_panel(ui: &Ui, link: &Response, name: &str, tip: Option<&ItemTooltip>, fs: f32) {
+/// the tooltip lines (right column right-aligned) and, for Wowhead or its addon
+/// fallback, a small source note. Without data, the name and a message ("Cargando
+/// datos…" while the addon or Wowhead has not answered, "Sin datos de Wowhead").
+fn item_panel(ui: &Ui, link: &Response, name: &str, view: PanelView<'_>, fs: f32) {
     let size = (fs * 0.92).max(11.0);
     egui::Tooltip::always_open(ui.ctx().clone(), ui.layer_id(), link.id.with("item-panel"), link.rect).width(300.0).show(|ui| {
         ui.spacing_mut().item_spacing.y = 2.0;
-        let Some(tip) = tip else {
-            ui.label(RichText::new(name.trim_matches(['[', ']'])).size(size).family(widgets::semibold_family()).color(style::LINK_GOLD));
-            ui.label(RichText::new("Cargando datos…").size(size * 0.9).color(style::MUTED));
-            return;
+        let (tip, note) = match view {
+            PanelView::Tip { tip, note } => (tip, note),
+            PanelView::Message(text) => {
+                ui.label(RichText::new(name.trim_matches(['[', ']'])).size(size).family(widgets::semibold_family()).color(style::LINK_GOLD));
+                ui.label(RichText::new(text).size(size * 0.9).color(style::MUTED));
+                return;
+            }
         };
         for (i, TipLine { left, right }) in tip.lines.iter().enumerate() {
             let (text, color) = if i == 0 {
@@ -934,6 +983,10 @@ fn item_panel(ui: &Ui, link: &Response, name: &str, tip: Option<&ItemTooltip>, f
                     });
                 }
             }
+        }
+        if let Some(note) = note {
+            ui.add_space(2.0);
+            ui.label(RichText::new(note).size(size * 0.78).color(style::DIM));
         }
     });
 }

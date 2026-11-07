@@ -35,16 +35,19 @@ pub enum ItemTooltips {
     Off,
     /// The game's own tooltip text, sent by the addon.
     Addon,
+    /// The item from wowhead.com (sends the item id over the internet).
+    Wowhead,
 }
 
 impl ItemTooltips {
     /// Every value, in the order the settings selector lists them.
-    pub const ALL: [ItemTooltips; 2] = [ItemTooltips::Off, ItemTooltips::Addon];
+    pub const ALL: [ItemTooltips; 3] = [ItemTooltips::Off, ItemTooltips::Addon, ItemTooltips::Wowhead];
 
     pub fn as_str(self) -> &'static str {
         match self {
             ItemTooltips::Off => "off",
             ItemTooltips::Addon => "addon",
+            ItemTooltips::Wowhead => "wowhead",
         }
     }
 
@@ -53,6 +56,7 @@ impl ItemTooltips {
         match self {
             ItemTooltips::Off => "Desactivado",
             ItemTooltips::Addon => "WoW (addon)",
+            ItemTooltips::Wowhead => "Wowhead (internet)",
         }
     }
 }
