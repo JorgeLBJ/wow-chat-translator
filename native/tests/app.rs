@@ -3,7 +3,7 @@
 
 use wow_chat_translator::app::debug_log::{iso_utc, DebugLog};
 use wow_chat_translator::app::game_watcher::{GameChange, GameWatcher};
-use wow_chat_translator::app::messages::{badge, can_translate, shows_translation, BadgeKind, MessageList, Mode, Tab, MAX_ITEMS};
+use wow_chat_translator::app::messages::{badge, can_translate, flip_label, row_mode, shows_translation, BadgeKind, MessageList, Mode, Tab, MAX_ITEMS};
 use wow_chat_translator::app::presence::PresenceGate;
 use wow_chat_translator::app::style::{channel_label, class_color, hhmm, tab_color, translator_label, ReaderState};
 use wow_chat_translator::core::pipeline::{ItemPatch, OverlayItem, Status, UiEvent};
@@ -300,6 +300,20 @@ fn translation_is_shown_only_in_translated_mode_when_present() {
     it.translated = Some("hola".into());
     assert!(shows_translation(&it, Mode::Translated));
     assert!(!shows_translation(&it, Mode::Original));
+}
+
+#[test]
+fn a_flipped_row_shows_the_other_text_and_its_menu_entry_names_it() {
+    let mut it = item(1, None);
+    // Nothing to flip without a translation (log lines, Spanish, not translated yet).
+    assert_eq!(row_mode(Mode::Translated, true), Mode::Original);
+    assert_eq!(flip_label(&it, Mode::Translated), None);
+    it.translated = Some("hola".into());
+    assert_eq!(row_mode(Mode::Translated, false), Mode::Translated);
+    assert_eq!(row_mode(Mode::Original, true), Mode::Translated);
+    assert_eq!(flip_label(&it, row_mode(Mode::Translated, false)), Some("Ver original"));
+    assert_eq!(flip_label(&it, row_mode(Mode::Translated, true)), Some("Ver traducción"));
+    assert_eq!(flip_label(&it, row_mode(Mode::Original, false)), Some("Ver traducción"));
 }
 
 #[test]

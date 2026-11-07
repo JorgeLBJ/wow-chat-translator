@@ -1,6 +1,8 @@
 //! The overlay window drawing (port of `app/src/renderer/overlay.html` + `overlay.js`).
 //! Only drawing and input here; state rules live in `messages`, `style`, `shared`.
 
+use std::cell::Cell;
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -15,7 +17,7 @@ use crate::core::pipeline::{OverlayItem, Status, UiEvent};
 use crate::core::prefs::Bounds;
 
 use super::compose::{self, copied_message, failed_message, translate_outgoing, OUT_LANGS};
-use super::messages::{badge, can_translate, shows_translation, BadgeKind, Mode, Row, Tab};
+use super::messages::{badge, can_translate, flip_label, row_mode, shows_translation, BadgeKind, Mode, Row, Tab};
 use super::settings::{self, SettingsState};
 use super::shared::Shared;
 use super::style::{self, channel_label, class_color, tab_color};
@@ -48,8 +50,9 @@ pub struct OverlayApp {
     settings: Arc<Mutex<SettingsState>>,
     icon: Option<Arc<egui::IconData>>,
     compose: Compose,
-    /// `WCT_DEV_STATE=hover`: draws the first translated row as hovered (screenshots).
-    dev_hover: bool,
+    /// Rows the user flipped from the context menu ("Ver original" / "Ver traducción"):
+    /// they show the other text than the global Traducido / Original mode.
+    flipped: HashSet<u64>,
     /// `WCT_DEV_STATE=menu`: draws the row context menu on this message (screenshots).
     dev_menu: Option<u64>,
     /// `WCT_DEV_STATE=select`: drags the mouse over the first message with synthetic
@@ -92,7 +95,7 @@ impl OverlayApp {
             opacity,
             last_bounds: None,
             bounds_dirty_since: None,
-            dev_hover: false,
+            flipped: HashSet::new(),
             dev_menu: None,
             dev_select: None,
             first_row_rect: None,
@@ -110,7 +113,6 @@ impl OverlayApp {
         for part in spec.split(',').map(str::trim) {
             match part.split_once('=') {
                 Some(("settings", pane)) => settings::dev_open(ctx, &self.shared, &self.settings, pane),
-                _ if part == "hover" => self.dev_hover = true,
                 _ if part == "menu" => self.dev_menu = Some(900_001),
                 _ if part == "select" => self.dev_select = Some(0),
                 _ if part == "addon" => super::addon_panel::dev_open(&self.shared),
@@ -291,6 +293,7 @@ impl OverlayApp {
         let (picked, over) = widgets::segmented(ui, Id::new("mode-seg"), &items, self.mode, pad, 20.0);
         if let Some(mode) = picked {
             self.mode = mode;
+            self.flipped.clear(); // the global switch sets every row again
             self.scroll_to_bottom = true;
         }
         over
@@ -327,6 +330,7 @@ impl OverlayApp {
 
     fn messages(&mut self, ui: &mut Ui, font_size: f32) {
         let mut clicked = None;
+        let mut flip = None;
         {
             let model = self.shared.model();
             // Dragging over the list selects text (like Electron), it does not scroll it.
@@ -345,13 +349,11 @@ impl OverlayApp {
                 ui.style_mut().interaction.selectable_labels = true;
                 ui.spacing_mut().item_spacing.y = 0.0;
                 let mut any = false;
-                let mut force_hover = self.dev_hover;
                 let mut row_index = 0;
                 for row in model.list.visible() {
                     any = true;
-                    let forced = force_hover && shows_translation(&row.item, self.mode);
-                    force_hover &= !forced;
-                    let resp = message_row(ui, row, self.mode, font_size, forced || self.dev_menu == Some(row.item.id));
+                    let mode = row_mode(self.mode, self.flipped.contains(&row.item.id));
+                    let resp = message_row(ui, row, mode, font_size, self.dev_menu == Some(row.item.id));
                     if self.first_row_rect.is_none() || row_index == 0 {
                         self.first_row_rect = Some(resp.rect);
                     }
@@ -359,7 +361,7 @@ impl OverlayApp {
                     if resp.clicked() && can_translate(&row.item) {
                         clicked = Some(row.item.id);
                     }
-                    let shown = if shows_translation(&row.item, self.mode) {
+                    let shown = if shows_translation(&row.item, mode) {
                         row.item.translated.clone().unwrap_or_default()
                     } else {
                         row.item.original.clone()
@@ -370,8 +372,16 @@ impl OverlayApp {
                             shared.log.write(&format!("copy failed: {e}"));
                         }
                     };
+                    let flip_clicked = Cell::new(false);
                     let menu = |ui: &mut Ui| {
                         widgets::field_style(ui);
+                        if let Some(label) = flip_label(&row.item, mode) {
+                            if ui.button(label).clicked() {
+                                flip_clicked.set(true);
+                                ui.close();
+                            }
+                            ui.separator();
+                        }
                         if ui.button("Copiar mensaje").clicked() {
                             copy(&shown);
                             ui.close();
@@ -394,6 +404,9 @@ impl OverlayApp {
                     } else {
                         resp.context_menu(menu);
                     }
+                    if flip_clicked.get() {
+                        flip = Some(row.item.id);
+                    }
                 }
                 if !any {
                     ui.add_space(30.0);
@@ -402,6 +415,11 @@ impl OverlayApp {
                     });
                 }
             });
+        }
+        if let Some(id) = flip {
+            if !self.flipped.remove(&id) {
+                self.flipped.insert(id);
+            }
         }
         if let Some(id) = clicked {
             self.shared.translate_by_id(id);
@@ -746,16 +764,14 @@ fn tab_button(ui: &mut Ui, label: &str, on: bool, count: Option<u32>) -> Respons
 }
 
 /// One chat line: time, channel tag, player, badge, text (with colored emoji).
-fn message_row(ui: &mut Ui, row: &Row, mode: Mode, fs: f32, force_hover: bool) -> Response {
+/// One message. `highlight` draws it as hovered (screenshots of its context menu).
+fn message_row(ui: &mut Ui, row: &Row, mode: Mode, fs: f32, highlight: bool) -> Response {
     let item = &row.item;
     let show_t = shows_translation(item, mode);
     let clickable = can_translate(item);
     let bg_slot = ui.painter().add(Shape::Noop);
     let body_h = fs * 1.35;
     let row_id = Id::new(("msg-row", item.id));
-    // `.m:hover .orig`: hover is judged on the whole row as drawn last frame, so the
-    // original line shows up in the same frame the pointer enters the row.
-    let hovered = force_hover || ui.ctx().read_response(row_id).is_some_and(|r| ui.rect_contains_pointer(r.rect));
 
     let inner = Frame::new().inner_margin(Margin::symmetric(8, 3)).show(ui, |ui| {
         ui.set_width(ui.available_width());
@@ -797,12 +813,6 @@ fn message_row(ui: &mut Ui, row: &Row, mode: Mode, fs: f32, force_hover: bool) -
                     let shown = if log.is_some() && item.player.is_empty() { text.to_string() } else { format!(": {text}") };
                     EmojiLabel::new(RichText::new(shown).color(color)).show(ui);
                 });
-                if hovered && show_t {
-                    ui.add(
-                        egui::Label::new(RichText::new(&item.original).italics().size(fs * 0.88).color(style::MUTED))
-                            .wrap(),
-                    );
-                }
             });
         });
     });
@@ -811,7 +821,7 @@ fn message_row(ui: &mut Ui, row: &Row, mode: Mode, fs: f32, force_hover: bool) -
     // Click only (never drag): a press-and-drag goes to the selectable labels below and
     // selects text, a plain click translates paused rows, a right click opens the menu.
     let resp = ui.interact(rect, row_id, Sense::click());
-    if hovered || resp.hovered() {
+    if highlight || resp.hovered() {
         let fill = if clickable { with_alpha(style::ACCENT, 36) } else { white(0.05) };
         ui.painter().set(bg_slot, egui::epaint::RectShape::filled(rect, 6.0, fill));
     }

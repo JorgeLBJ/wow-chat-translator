@@ -80,7 +80,13 @@ pub fn run() -> eframe::Result {
                 shared.log.write(&format!("tray failed: {e}"));
             }
             workers::spawn(shared.clone(), job_rx);
-            monitor::spawn(shared.clone());
+            // Screenshots with sample messages never read the real game strip, so no
+            // live chat (real player names) ends up in them.
+            let samples_only = win::dev_capture()
+                && std::env::var("WCT_DEV_STATE").is_ok_and(|s| s.split(',').any(|p| p.trim() == "sample"));
+            if !samples_only {
+                monitor::spawn(shared.clone());
+            }
             hotkey::spawn(shared.clone());
             let icon = eframe::icon_data::from_png_bytes(ICON_256).ok().map(Arc::new);
             Ok(Box::new(OverlayApp::new(shared, started_hidden, icon)))

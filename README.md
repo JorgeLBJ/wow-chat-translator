@@ -14,7 +14,7 @@ Traducción en tiempo real · Respuestas en un atajo · Gratis y de código abie
 
 <p align="center">
   <img src="docs/screenshots/overlay.png" alt="Chat de WoW traducido al español, con pestañas por canal y colores de clase" width="602">
-  <br><sub>Pasa el ratón por un mensaje para ver el original.</sub>
+  <br><sub>Chat traducido con pestañas por canal, y el Registro opcional (botín, oro, sistema, PNJ) debajo.</sub>
 </p>
 
 ---
@@ -37,7 +37,10 @@ y te deja contestar en inglés escribiendo en español.
 ## ✨ Lo que hace
 
 - 🌍 **Traducción al instante** de cualquier idioma al español: inglés, alemán, francés, portugués…
-- 🔁 **Traducido u original** con un clic, y pasa el ratón por encima de un mensaje para ver el texto original.
+- 🔁 **Traducido u original** para todo el chat con un clic arriba, o solo para un mensaje con **clic derecho → Ver original**. El mismo menú copia el mensaje, el original o el nombre.
+
+  <img src="docs/screenshots/menu.png" alt="Menú de clic derecho con Ver original y opciones para copiar" width="480">
+
 - 🗂️ **Pestañas por canal**: Todos, General, Comercio, Hermandad, Grupo y Susurros.
 - 📜 **Registro del chat (opcional)**: activa *Ajustes → General → Registro del chat* para ver también botín, oro, sistema, experiencia, reputación, logros, PNJ y emociones en la pestaña **Registro**, sin traducir. Viene desactivado.
 - 🎨 **Colores de clase** y nombres como en el juego. Los enlaces de objetos, misiones y logros **no se traducen**.

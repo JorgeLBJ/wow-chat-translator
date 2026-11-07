@@ -175,6 +175,23 @@ pub fn shows_translation(item: &OverlayItem, mode: Mode) -> bool {
     mode == Mode::Translated && item.translated.is_some()
 }
 
+/// The mode one row is drawn in: the global mode, or the other one when the user
+/// flipped that row from its context menu.
+pub fn row_mode(global: Mode, flipped: bool) -> Mode {
+    match (global, flipped) {
+        (m, false) => m,
+        (Mode::Translated, true) => Mode::Original,
+        (Mode::Original, true) => Mode::Translated,
+    }
+}
+
+/// The context-menu entry that flips a row drawn in `mode`; `None` when the message
+/// has no translation to switch to.
+pub fn flip_label(item: &OverlayItem, mode: Mode) -> Option<&'static str> {
+    item.translated.as_ref()?;
+    Some(if shows_translation(item, mode) { "Ver original" } else { "Ver traducción" })
+}
+
 /// Paused and failed messages can be translated with a click.
 pub fn can_translate(item: &OverlayItem) -> bool {
     matches!(item.status, Status::Paused | Status::Error)
