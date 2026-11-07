@@ -233,7 +233,6 @@ impl Shared {
         }
     }
 
-    /// "Limpiar mensajes": empties the overlay list.
     /// Turns the "Registro" option on or off; off also removes the log rows already shown.
     pub fn set_show_log(&self, on: bool) {
         self.config().prefs.show_log = on;
@@ -276,6 +275,7 @@ impl Shared {
         }
     }
 
+    /// "Limpiar mensajes": empties the overlay list.
     pub fn clear_messages(&self) {
         self.model().list.clear();
         self.log.write("messages cleared");

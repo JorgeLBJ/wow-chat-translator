@@ -379,6 +379,9 @@ end
 -- Chat first; then log lines and tooltips take turns.
 local tipTurn = false
 strip:SetScript("OnUpdate", function()
+  if not db then
+    return -- settings load on ADDON_LOADED
+  end
   local now = GetTime()
   if now - shownAt < db.hold then
     return
