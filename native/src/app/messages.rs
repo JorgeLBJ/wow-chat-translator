@@ -72,6 +72,8 @@ pub enum Mode {
 pub struct Row {
     pub item: OverlayItem,
     pub time_label: String,
+    /// How many identical consecutive log lines this row stands for (shown as ×N).
+    pub count: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -111,7 +113,22 @@ impl MessageList {
             }
         }
         let time_label = time_label(item.time);
-        self.rows.push_back(Row { item, time_label });
+        // Identical consecutive log lines (an addon repeating itself, the same loot) stack
+        // into the previous row: ×N and the latest time. Player chat never stacks.
+        if item.tab == Some(LOG_TAB) {
+            if let Some(last) = self.rows.back_mut() {
+                let same = last.item.tab == Some(LOG_TAB)
+                    && last.item.channel == item.channel
+                    && last.item.player == item.player
+                    && last.item.original == item.original;
+                if same {
+                    last.count += 1;
+                    last.time_label = time_label;
+                    return;
+                }
+            }
+        }
+        self.rows.push_back(Row { item, time_label, count: 1 });
         while self.rows.len() > MAX_ITEMS {
             self.rows.pop_front();
         }

@@ -565,7 +565,7 @@ fn link_refs_expose_type_and_id() {
 
 #[test]
 fn log_channels_map_to_the_log_tab() {
-    for channel in ["*Loot", "*Money", "*Currency", "*System", "*XP", "*Reputation", "*Skill", "*Achievement", "*NPC", "*BossEmote", "*Emote"] {
+    for channel in ["*Loot", "*Money", "*Currency", "*System", "*XP", "*Reputation", "*Skill", "*Achievement", "*NPC", "*BossEmote", "*Emote", "*Addon"] {
         assert!(is_log_channel(channel), "{channel}");
         assert_eq!(channel_tab(channel), Some("log"), "{channel}");
         assert!(log_label(channel).is_some(), "{channel}");

@@ -3,7 +3,7 @@
 
 /// Channel labels the addon gives non-player chat (loot, system, NPC speech...), with
 /// their Spanish chip text. They go to the "Registro" tab and are never translated.
-const LOG_CHANNELS: [(&str, &str); 11] = [
+const LOG_CHANNELS: [(&str, &str); 12] = [
     ("loot", "Botín"),
     ("money", "Oro"),
     ("currency", "Moneda"),
@@ -15,6 +15,8 @@ const LOG_CHANNELS: [(&str, &str); 11] = [
     ("npc", "PNJ"),
     ("bossemote", "Jefe"),
     ("emote", "Emoción"),
+    // Lines other addons print straight into the chat frame (Zygor, TomTom...).
+    ("addon", "Addon"),
 ];
 
 /// The tab key of log items.

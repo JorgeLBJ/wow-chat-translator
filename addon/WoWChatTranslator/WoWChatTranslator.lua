@@ -463,6 +463,24 @@ events:SetScript("OnEvent", function(_, event, ...)
     for logEvent in pairs(LOG_CHANNEL) do
       pcall(events.RegisterEvent, events, logEvent)
     end
+    -- Other addons (Zygor, TomTom...) print straight into the main chat frame instead of
+    -- firing chat events. Lines from chat events carry a chat type id (5th argument of
+    -- AddMessage); prints have none, so only those are sent, as "*Addon" log lines.
+    -- Our own "WCT" lines are skipped. A post-hook never changes what the frame shows.
+    if DEFAULT_CHAT_FRAME and hooksecurefunc then
+      hooksecurefunc(DEFAULT_CHAT_FRAME, "AddMessage", function(_, text, _, _, _, chatTypeId)
+        if chatTypeId ~= nil or type(text) ~= "string" then
+          return
+        end
+        if issecretvalue and issecretvalue(text) then
+          return
+        end
+        if text:find("^|cff33ff99WCT|r") then
+          return
+        end
+        pcall(pushLog, "Addon", "", text)
+      end)
+    end
     return
   end
   if event == "DISPLAY_SIZE_CHANGED" or event == "UI_SCALE_CHANGED" then

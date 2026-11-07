@@ -110,7 +110,7 @@ fn embedded_files_equal_the_repo_files_byte_for_byte() {
 fn bundled_version_is_the_toc_version() {
     let toc = std::str::from_utf8(embedded("WoWChatTranslator.toc")).unwrap();
     assert_eq!(toc_version(toc).as_deref(), Some(addon::VERSION));
-    assert_eq!(addon::VERSION, "0.3.1");
+    assert_eq!(addon::VERSION, "0.3.2");
 }
 
 #[test]

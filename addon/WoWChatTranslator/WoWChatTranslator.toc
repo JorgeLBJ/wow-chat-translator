@@ -2,7 +2,7 @@
 ## Title: WoW Chat Translator
 ## Notes: Renders incoming chat into a clean panel that the companion app reads via OCR.
 ## Author: Jorge Luis Bustamante Jara
-## Version: 0.3.1
+## Version: 0.3.2
 ## SavedVariables: WCT_DB
 
 WoWChatTranslator.lua

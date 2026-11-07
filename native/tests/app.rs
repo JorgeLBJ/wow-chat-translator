@@ -255,6 +255,39 @@ fn dropping_the_log_removes_log_rows_and_leaves_registro() {
 }
 
 #[test]
+fn identical_consecutive_log_lines_stack_into_one_row() {
+    let mut list = MessageList::default();
+    let line = |id: u64, text: &str, time: u64| {
+        let mut it = item(id, Some("log"));
+        it.channel = "*Addon".into();
+        it.player = String::new();
+        it.original = text.into();
+        it.time = time;
+        it
+    };
+    let label = |t: u64| format!("t{t}");
+    list.apply(UiEvent::Add(line(1, "Zygor: 377 guides are loaded.", 1)), &label);
+    list.apply(UiEvent::Add(line(2, "Zygor: 377 guides are loaded.", 2)), &label);
+    list.apply(UiEvent::Add(line(3, "Zygor: 377 guides are loaded.", 3)), &label);
+    let rows: Vec<(u64, u32, String)> = list.visible().map(|r| (r.item.id, r.count, r.time_label.clone())).collect();
+    assert_eq!(rows, vec![(1, 3, "t3".to_string())], "one row, ×3, latest time");
+    // A different line, then the first text again: no longer consecutive.
+    list.apply(UiEvent::Add(line(4, "TomTom detected.", 4)), &label);
+    list.apply(UiEvent::Add(line(5, "Zygor: 377 guides are loaded.", 5)), &label);
+    let counts: Vec<u32> = list.visible().map(|r| r.count).collect();
+    assert_eq!(counts, vec![3, 1, 1]);
+    // Player chat never stacks, even when identical.
+    let mut chat = MessageList::default();
+    for id in 1..=2 {
+        let mut it = item(id, Some("trade"));
+        it.original = "wts ore".into();
+        chat.apply(UiEvent::Add(it), &label);
+    }
+    let counts: Vec<u32> = chat.visible().map(|r| r.count).collect();
+    assert_eq!(counts, vec![1, 1]);
+}
+
+#[test]
 fn list_applies_updates_and_ignores_unknown_ids() {
     let mut list = MessageList::default();
     add(&mut list, 1, None);

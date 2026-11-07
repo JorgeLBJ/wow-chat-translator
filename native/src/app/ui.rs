@@ -166,6 +166,9 @@ impl OverlayApp {
                             ("*Reputation", "", "Reputación con Ventormenta aumentada en 25."),
                             ("*NPC", "Guardia de Ventormenta", "¡Mantente alerta, ciudadano!"),
                             ("*System", "", "Ya no estás ausente."),
+                            ("*Addon", "", "Zygor Guides Viewer: 377 guides are loaded."),
+                            ("*Addon", "", "Zygor Guides Viewer: 377 guides are loaded."),
+                            ("*Addon", "", "Zygor Guides Viewer: 377 guides are loaded."),
                         ];
                         for (i, (channel, player, text)) in log.into_iter().enumerate() {
                             let item = OverlayItem {
@@ -873,6 +876,12 @@ fn message_row(
                         None => {
                             EmojiLabel::new(RichText::new(format!("{lead}{text}")).color(color)).show(ui);
                         }
+                    }
+                    // Stacked identical log lines: ×N after the text.
+                    if row.count > 1 {
+                        ui.add_space(6.0);
+                        let n = format!("×{}", row.count);
+                        chip(ui, &n, FontId::proportional(fs * 0.72), style::SEG_TEXT, white(0.1), vec2(4.0, 0.0), 3, body_h, Sense::hover());
                     }
                 });
             });
