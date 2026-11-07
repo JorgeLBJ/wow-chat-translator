@@ -21,11 +21,57 @@ pub struct Prefs {
     /// Also show non-player chat (loot, money, system, NPC...) in a "Registro" tab.
     /// Off by default.
     pub show_log: bool,
+    /// Item data shown when hovering an item link. Off by default.
+    pub item_tooltips: ItemTooltips,
+}
+
+/// Where the item hover panel takes its data from (`itemTooltips` in config.json).
+/// Stored as a string; an unknown value (e.g. from a newer version) reads as `Off`
+/// instead of resetting the whole config.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "String", into = "String")]
+pub enum ItemTooltips {
+    #[default]
+    Off,
+    /// The game's own tooltip text, sent by the addon.
+    Addon,
+}
+
+impl ItemTooltips {
+    /// Every value, in the order the settings selector lists them.
+    pub const ALL: [ItemTooltips; 2] = [ItemTooltips::Off, ItemTooltips::Addon];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ItemTooltips::Off => "off",
+            ItemTooltips::Addon => "addon",
+        }
+    }
+
+    /// The Spanish label of the settings selector.
+    pub fn label(self) -> &'static str {
+        match self {
+            ItemTooltips::Off => "Desactivado",
+            ItemTooltips::Addon => "WoW (addon)",
+        }
+    }
+}
+
+impl From<String> for ItemTooltips {
+    fn from(s: String) -> Self {
+        Self::ALL.into_iter().find(|v| v.as_str() == s).unwrap_or_default()
+    }
+}
+
+impl From<ItemTooltips> for String {
+    fn from(v: ItemTooltips) -> Self {
+        v.as_str().to_string()
+    }
 }
 
 impl Default for Prefs {
     fn default() -> Self {
-        Self { font_size: 13.0, opacity: 1.0, always_on_top: true, auto_start: true, translation_paused: false, hide_from_capture: false, show_log: false }
+        Self { font_size: 13.0, opacity: 1.0, always_on_top: true, auto_start: true, translation_paused: false, hide_from_capture: false, show_log: false, item_tooltips: ItemTooltips::Off }
     }
 }
 

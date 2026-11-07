@@ -43,6 +43,7 @@ y te deja contestar en inglés escribiendo en español.
 
 - 🗂️ **Pestañas por canal**: Todos, General, Comercio, Hermandad, Grupo y Susurros.
 - 📜 **Registro del chat (opcional)**: activa *Ajustes → General → Registro del chat* para ver también botín, oro, sistema, experiencia, reputación, logros, PNJ y emociones en la pestaña **Registro**, sin traducir. Viene desactivado.
+- 🛡️ **Datos de objetos al pasar el ratón (opcional)**: en *Ajustes → General → Datos de objetos* elige *WoW (addon)* y, al pasar el ratón por un objeto enlazado, verás un panel pequeño con sus datos tal como los muestra el juego (calidad, estadísticas, requisitos). Viene desactivado.
 - 🎨 **Colores de clase** y nombres como en el juego. Los enlaces de objetos, misiones y logros **no se traducen**.
 - 😄 **Emojis** como `:sob:` se ven como emojis de verdad.
 - ✍️ **Responde en inglés**: pulsa <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd>, escribe en español,

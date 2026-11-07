@@ -3,6 +3,7 @@
 
 pub mod channels;
 pub mod emoji;
+pub mod item_tips;
 pub mod language;
 pub mod links;
 pub mod pipeline;

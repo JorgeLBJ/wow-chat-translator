@@ -13,14 +13,16 @@ use eframe::egui::{
 use egui_twemoji::EmojiLabel;
 
 use crate::core::channels::log_label;
+use crate::core::item_tips::{link_segments, ItemTooltip, ItemTooltipCache, Segment, TipLine};
+use crate::core::links::LinkRef;
 use crate::core::pipeline::{OverlayItem, Status, UiEvent};
-use crate::core::prefs::Bounds;
+use crate::core::prefs::{Bounds, ItemTooltips};
 
 use super::compose::{self, copied_message, failed_message, translate_outgoing, OUT_LANGS};
 use super::messages::{badge, can_translate, flip_label, row_mode, shows_translation, BadgeKind, Mode, Row, Tab};
 use super::settings::{self, SettingsState};
 use super::shared::Shared;
-use super::style::{self, channel_label, class_color, tab_color};
+use super::style::{self, channel_label, class_color, item_quality_color, tab_color};
 use super::{widgets, win};
 
 const BOUNDS_SAVE_DELAY: Duration = Duration::from_millis(600);
@@ -55,6 +57,8 @@ pub struct OverlayApp {
     flipped: HashSet<u64>,
     /// `WCT_DEV_STATE=menu`: draws the row context menu on this message (screenshots).
     dev_menu: Option<u64>,
+    /// `WCT_DEV_STATE=itemtip`: draws the item panel of the sample item link open.
+    dev_itemtip: bool,
     /// `WCT_DEV_STATE=select`: drags the mouse over the first message with synthetic
     /// input events to select its text (screenshots); the step of that drag.
     dev_select: Option<u32>,
@@ -97,6 +101,7 @@ impl OverlayApp {
             bounds_dirty_since: None,
             flipped: HashSet::new(),
             dev_menu: None,
+            dev_itemtip: false,
             dev_select: None,
             first_row_rect: None,
             capture_hidden: None,
@@ -114,6 +119,7 @@ impl OverlayApp {
             match part.split_once('=') {
                 Some(("settings", pane)) => settings::dev_open(ctx, &self.shared, &self.settings, pane),
                 _ if part == "menu" => self.dev_menu = Some(900_001),
+                _ if part == "itemtip" => self.dev_itemtip = true,
                 _ if part == "select" => self.dev_select = Some(0),
                 _ if part == "addon" => super::addon_panel::dev_open(&self.shared),
                 _ if part == "sample" => {
@@ -126,7 +132,7 @@ impl OverlayApp {
                         ("Whisper", Some("whisper"), "ROGUE", "Nyxie", "salut ! tu peux m'aider pour la quête ?", "¡hola! ¿me puedes ayudar con la misión?", "fr"),
                         ("General", Some("general"), "DRUID", "Folhaverde", "alguém sabe onde fica o treinador de herbalismo?", "¿alguien sabe dónde está el instructor de herboristería?", "pt"),
                         ("Raid", Some("group"), "SHAMAN", "Kazrak", "bloodlust on pull, everyone stack behind the boss", "ansia de sangre al empezar, todos juntos detrás del jefe", "en"),
-                        ("Trade", Some("trade"), "HUNTER", "Arrowind", "WTS [Copper Ore] x20, pst", "Vendo [Mineral de cobre] x20, susúrrame", "en"),
+                        ("Trade", Some("trade"), "HUNTER", "Arrowind", "WTS [Thunderfury, Blessed Blade of the Windseeker] 9999g, pst", "Vendo [Thunderfury, Blessed Blade of the Windseeker] 9999g, susúrrame", "en"),
                     ];
                     for (i, (channel, tab, class, player, original, translated, lang)) in samples.into_iter().enumerate() {
                         let item = OverlayItem {
@@ -143,10 +149,12 @@ impl OverlayApp {
                             provider: Some("google".into()),
                             fallback_reason: None,
                             error: None,
-                            links: Vec::new(),
+                            links: if i == 7 { vec![dev_item_link()] } else { Vec::new() },
                         };
                         model.list.apply(UiEvent::Add(item), &|_| "15:38".into());
                     }
+                    // Its tooltip, as the addon would have sent it.
+                    model.tips.insert(DEV_ITEM_ID, dev_item_tooltip());
                     // With the log option on, a few Registro lines too.
                     if self.shared.config().prefs.show_log {
                         let log = [
@@ -332,7 +340,9 @@ impl OverlayApp {
         let mut clicked = None;
         let mut flip = None;
         {
+            let item_tips = self.shared.config().prefs.item_tooltips;
             let model = self.shared.model();
+            let tips = (item_tips == ItemTooltips::Addon).then_some(&model.tips);
             // Dragging over the list selects text (like Electron), it does not scroll it.
             let mut area = egui::ScrollArea::vertical()
                 .stick_to_bottom(true)
@@ -353,7 +363,8 @@ impl OverlayApp {
                 for row in model.list.visible() {
                     any = true;
                     let mode = row_mode(self.mode, self.flipped.contains(&row.item.id));
-                    let resp = message_row(ui, row, mode, font_size, self.dev_menu == Some(row.item.id));
+                    let force_tip = self.dev_itemtip && row.item.links.iter().any(|l| l.id == DEV_ITEM_ID);
+                    let resp = message_row(ui, row, mode, font_size, self.dev_menu == Some(row.item.id), tips, force_tip);
                     if self.first_row_rect.is_none() || row_index == 0 {
                         self.first_row_rect = Some(resp.rect);
                     }
@@ -765,13 +776,24 @@ fn tab_button(ui: &mut Ui, label: &str, on: bool, count: Option<u32>) -> Respons
 
 /// One chat line: time, channel tag, player, badge, text (with colored emoji).
 /// One message. `highlight` draws it as hovered (screenshots of its context menu).
-fn message_row(ui: &mut Ui, row: &Row, mode: Mode, fs: f32, highlight: bool) -> Response {
+/// `tips` is set when item data is on ("Datos de objetos"): item links are then drawn in
+/// their quality color and show their panel on hover (`force_tip`: open, for screenshots).
+fn message_row(
+    ui: &mut Ui,
+    row: &Row,
+    mode: Mode,
+    fs: f32,
+    highlight: bool,
+    tips: Option<&ItemTooltipCache>,
+    force_tip: bool,
+) -> Response {
     let item = &row.item;
     let show_t = shows_translation(item, mode);
     let clickable = can_translate(item);
     let bg_slot = ui.painter().add(Shape::Noop);
     let body_h = fs * 1.35;
     let row_id = Id::new(("msg-row", item.id));
+    let link_hovered = Cell::new(false);
 
     let inner = Frame::new().inner_margin(Margin::symmetric(8, 3)).show(ui, |ui| {
         ui.set_width(ui.available_width());
@@ -810,8 +832,36 @@ fn message_row(ui: &mut Ui, row: &Row, mode: Mode, fs: f32, highlight: bool) -> 
                     }
                     let text = if show_t { item.translated.as_deref().unwrap_or("") } else { &item.original };
                     let color = if item.status == Status::Pending { style::TEXT.gamma_multiply(0.55) } else { style::TEXT };
-                    let shown = if log.is_some() && item.player.is_empty() { text.to_string() } else { format!(": {text}") };
-                    EmojiLabel::new(RichText::new(shown).color(color)).show(ui);
+                    let lead = if log.is_some() && item.player.is_empty() { "" } else { ": " };
+                    match tips.and_then(|tips| item_segments(text, &item.links).map(|segs| (tips, segs))) {
+                        Some((tips, segs)) => {
+                            let mut force = force_tip;
+                            if !lead.is_empty() {
+                                EmojiLabel::new(RichText::new(lead).color(color)).show(ui);
+                            }
+                            for seg in segs {
+                                match seg {
+                                    Segment::Text(t) => {
+                                        EmojiLabel::new(RichText::new(t).color(color)).show(ui);
+                                    }
+                                    Segment::Link(name, link) => {
+                                        let tip = tips.get(link.id);
+                                        let c = item_quality_color(tip.and_then(|t| t.quality));
+                                        let resp = ui.add(egui::Label::new(RichText::new(&name).color(c)));
+                                        // The row's own click area covers the text, so
+                                        // hover is read from the pointer position.
+                                        if std::mem::take(&mut force) || ui.rect_contains_pointer(resp.rect) {
+                                            link_hovered.set(true);
+                                            item_panel(ui, &resp, &name, tip, fs);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        None => {
+                            EmojiLabel::new(RichText::new(format!("{lead}{text}")).color(color)).show(ui);
+                        }
+                    }
                 });
             });
         });
@@ -833,9 +883,72 @@ fn message_row(ui: &mut Ui, row: &Row, mode: Mode, fs: f32, highlight: bool) -> 
         tip.push("Clic para traducir este mensaje".into());
     }
     let resp = if clickable { resp.on_hover_cursor(CursorIcon::PointingHand) } else { resp };
-    if tip.is_empty() {
+    if tip.is_empty() || link_hovered.get() {
         resp
     } else {
         resp.on_hover_text(tip.join("\n"))
     }
+}
+
+/// The text split at its item links, or `None` when it has no item link to draw apart
+/// (the row is then drawn exactly as without item data).
+fn item_segments(text: &str, links: &[LinkRef]) -> Option<Vec<Segment>> {
+    let items: Vec<LinkRef> = links.iter().filter(|l| l.kind == "item").cloned().collect();
+    if items.is_empty() {
+        return None;
+    }
+    let segs = link_segments(text, &items);
+    segs.iter().any(|s| matches!(s, Segment::Link(..))).then_some(segs)
+}
+
+const TIP_LINE: Color32 = Color32::from_rgb(0xdd, 0xdd, 0xdd);
+
+/// The small item panel under a hovered item link: the name in its quality color, then
+/// the game's tooltip lines (right column right-aligned). Without data yet, the name
+/// and "Cargando datos…" (the addon sends it with the next frames).
+fn item_panel(ui: &Ui, link: &Response, name: &str, tip: Option<&ItemTooltip>, fs: f32) {
+    let size = (fs * 0.92).max(11.0);
+    egui::Tooltip::always_open(ui.ctx().clone(), ui.layer_id(), link.id.with("item-panel"), link.rect).width(300.0).show(|ui| {
+        ui.spacing_mut().item_spacing.y = 2.0;
+        let Some(tip) = tip else {
+            ui.label(RichText::new(name.trim_matches(['[', ']'])).size(size).family(widgets::semibold_family()).color(style::LINK_GOLD));
+            ui.label(RichText::new("Cargando datos…").size(size * 0.9).color(style::MUTED));
+            return;
+        };
+        for (i, TipLine { left, right }) in tip.lines.iter().enumerate() {
+            let (text, color) = if i == 0 {
+                (RichText::new(left).family(widgets::semibold_family()).size(size * 1.05), item_quality_color(tip.quality))
+            } else {
+                (RichText::new(left).size(size), TIP_LINE)
+            };
+            match right {
+                None => {
+                    ui.add(egui::Label::new(text.color(color)).wrap());
+                }
+                Some(r) => {
+                    ui.horizontal(|ui| {
+                        ui.label(text.color(color));
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            ui.label(RichText::new(r).size(size).color(TIP_LINE));
+                        });
+                    });
+                }
+            }
+        }
+    });
+}
+
+/// Sample item of the `sample` dev state (screenshots): Thunderfury, legendary.
+const DEV_ITEM_ID: u64 = 19019;
+
+fn dev_item_link() -> LinkRef {
+    LinkRef { name: "[Thunderfury, Blessed Blade of the Windseeker]".into(), kind: "item".into(), id: DEV_ITEM_ID }
+}
+
+fn dev_item_tooltip() -> ItemTooltip {
+    let text = "q5\nThunderfury, Blessed Blade of the Windseeker\nBinds when picked up\nUnique\nOne-Hand\tSword\n\
+        44 - 84 Damage\tSpeed 1.90\n(33.7 damage per second)\n+5 Agility\n+8 Stamina\n+8 Fire Resistance\n\
+        +9 Nature Resistance\nChance on hit: Blasts your enemy with lightning, dealing 300 Nature damage and then \
+        jumping to additional nearby enemies.\nRequires Level 60";
+    crate::core::item_tips::parse_item_tooltip("19019", text).map(|(_, t)| t).expect("valid sample")
 }

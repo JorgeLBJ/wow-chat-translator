@@ -14,7 +14,7 @@ use crate::translators::claude_code::find_claude_executable;
 use crate::translators::google::GoogleTranslator;
 use crate::translators::http::{HttpClient, UreqClient};
 use crate::translators::{build_translator, llm_for, Llm};
-use crate::core::prefs::TranslatorSettings;
+use crate::core::prefs::{ItemTooltips, TranslatorSettings};
 
 use super::{addon_panel, autostart};
 use super::settings_form::{
@@ -37,6 +37,7 @@ const OK: Color32 = Color32::from_rgb(0x86, 0xef, 0xac);
 const ERR: Color32 = Color32::from_rgb(0xfc, 0xa5, 0xa5);
 const CAPTURE_NOTE: &str = "Útil para streams: la ventana no saldrá en capturas ni grabaciones.";
 const LOG_NOTE: &str = "Muestra también botín, oro, sistema, logros y PNJ en la pestaña Registro (sin traducir).";
+const ITEM_TIPS_NOTE: &str = "Al pasar el ratón por un objeto enlazado muestra sus datos. «WoW (addon)» usa el texto del propio juego.";
 const STRIP_NOTE: &str = "El addon envía el chat como una franja diminuta de colores en la esquina superior izquierda de WoW. No pongas ninguna ventana encima de esa esquina.";
 
 pub fn viewport_id() -> ViewportId {
@@ -531,6 +532,19 @@ fn general_pane(ui: &mut Ui, shared: &Arc<Shared>) {
     row(ui, "Registro del chat", LOG_NOTE, |ui| {
         if switch(ui, &mut show_log).changed() {
             shared.set_show_log(show_log);
+        }
+    });
+    let current = shared.config().prefs.item_tooltips;
+    row(ui, "Datos de objetos", ITEM_TIPS_NOTE, |ui| {
+        widgets::field_style(ui);
+        let mut value = current;
+        egui::ComboBox::from_id_salt("item-tooltips").width(140.0).selected_text(value.label()).show_ui(ui, |ui| {
+            for v in ItemTooltips::ALL {
+                ui.selectable_value(&mut value, v, v.label());
+            }
+        });
+        if value != current {
+            shared.set_item_tooltips(value);
         }
     });
     row(ui, "Mensajes", "Borra la lista de mensajes de la ventana del chat.", |ui| {

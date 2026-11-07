@@ -26,6 +26,23 @@ pub const ERROR_BG: Color32 = hex(0x7f1d1d);
 pub const ERROR_TEXT: Color32 = hex(0xfecaca);
 pub const CLOSE_HOVER: Color32 = hex(0xc42b1c);
 pub const SEG_TEXT: Color32 = hex(0xaaaabb);
+/// Item links whose quality is not known yet (WoW's link gold).
+pub const LINK_GOLD: Color32 = hex(0xffd100);
+
+/// WoW item quality colors (0 poor ... 5 legendary, 6 artifact, 7-8 heirloom/account).
+pub fn item_quality_color(quality: Option<u8>) -> Color32 {
+    match quality {
+        Some(0) => hex(0x9d9d9d),
+        Some(1) => hex(0xffffff),
+        Some(2) => hex(0x1eff00),
+        Some(3) => hex(0x0070dd),
+        Some(4) => hex(0xa335ee),
+        Some(5) => hex(0xff8000),
+        Some(6) => hex(0xe6cc80),
+        Some(7 | 8) => hex(0x00ccff),
+        _ => LINK_GOLD,
+    }
+}
 
 const DEFAULT_NAME: Color32 = hex(0xd0d4da);
 const DEFAULT_TAB: Color32 = hex(0x9aa3ad);

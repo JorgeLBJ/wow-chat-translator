@@ -9,8 +9,9 @@ use std::time::Instant;
 
 use eframe::egui;
 
+use crate::core::item_tips::{split_item_frames, ItemTooltipCache};
 use crate::core::pipeline::{filter_log_messages, Job, Pipeline, Translation, Translator, UiEvent};
-use crate::core::prefs::{self, Config};
+use crate::core::prefs::{self, Config, ItemTooltips};
 use crate::strip::Message;
 
 use super::addon_panel::AddonPanel;
@@ -27,6 +28,8 @@ pub const TARGET_LANG: &str = "es";
 pub struct Model {
     pub pipeline: Pipeline,
     pub list: MessageList,
+    /// Item tooltips the addon sent (`*Item` frames), shown on hover when enabled.
+    pub tips: ItemTooltipCache,
 }
 
 impl Model {
@@ -97,7 +100,7 @@ impl Shared {
         let mut pipeline = Pipeline::new(TARGET_LANG);
         pipeline.set_paused(config.prefs.translation_paused);
         Self {
-            model: Mutex::new(Model { pipeline, list: MessageList::default() }),
+            model: Mutex::new(Model { pipeline, list: MessageList::default(), tips: ItemTooltipCache::default() }),
             config: Mutex::new(config),
             config_path,
             log,
@@ -170,9 +173,15 @@ impl Shared {
 
     pub fn add_messages(&self, messages: &[Message]) {
         let show_log = self.config().prefs.show_log;
-        let messages = filter_log_messages(messages, show_log);
+        // Tooltip frames (`*Item`) are never rows; they are kept whatever the settings
+        // say (the addon sends each item once per session), only shown when enabled.
+        let (messages, tips) = split_item_frames(messages);
+        let messages = filter_log_messages(&messages, show_log);
         let jobs = {
             let mut model = self.model();
+            for (id, tip) in tips {
+                model.tips.insert(id, tip);
+            }
             model.pipeline.add_messages(&messages);
             model.sync(&self.log);
             model.pipeline.take_jobs()
@@ -229,6 +238,14 @@ impl Shared {
             self.model().list.drop_log();
         }
         self.log.write(&format!("show log {on}"));
+        self.repaint();
+    }
+
+    /// "Datos de objetos": where the item hover panel takes its data from.
+    pub fn set_item_tooltips(&self, value: ItemTooltips) {
+        self.config().prefs.item_tooltips = value;
+        self.save_config();
+        self.log.write(&format!("item tooltips {}", value.as_str()));
         self.repaint();
     }
 

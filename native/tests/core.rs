@@ -642,3 +642,180 @@ fn show_log_defaults_off_and_persists() {
     assert!(!prefs::load(&path).prefs.show_log, "missing key means off");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// ---------------------------------------------------------------- item tooltips (addon source)
+
+use wow_chat_translator::core::item_tips::{
+    is_item_channel, link_segments, parse_item_tooltip, split_item_frames, ItemTooltip, ItemTooltipCache, Segment, TipLine,
+    ITEM_CHANNEL, TOOLTIP_CACHE_CAP,
+};
+use wow_chat_translator::core::prefs::ItemTooltips;
+
+fn item_frame(id: &str, text: &str) -> Message {
+    Message { channel: ITEM_CHANNEL.into(), class: None, player: id.into(), text: text.into() }
+}
+
+fn tip_line(left: &str, right: Option<&str>) -> TipLine {
+    TipLine { left: left.into(), right: right.map(str::to_string) }
+}
+
+#[test]
+fn item_tooltip_payload_parses_quality_lines_and_right_column() {
+    let text = "q4\nArcanite Reaper\nBinds when equipped\nTwo-Hand\tAxe\n153 - 256 Damage\tSpeed 3.80\n \nRequires Level 58";
+    let (id, tip) = parse_item_tooltip("12784", text).expect("valid");
+    assert_eq!(id, 12784);
+    assert_eq!(tip.quality, Some(4));
+    assert_eq!(tip.name(), Some("Arcanite Reaper"));
+    assert_eq!(
+        tip.lines,
+        vec![
+            tip_line("Arcanite Reaper", None),
+            tip_line("Binds when equipped", None),
+            tip_line("Two-Hand", Some("Axe")),
+            tip_line("153 - 256 Damage", Some("Speed 3.80")),
+            tip_line("Requires Level 58", None),
+        ],
+        "blank spacer lines are dropped"
+    );
+}
+
+#[test]
+fn item_tooltip_without_quality_prefix_keeps_every_line() {
+    let (_, tip) = parse_item_tooltip("2589", "Linen Cloth\nTrade Goods").unwrap();
+    assert_eq!(tip.quality, None);
+    assert_eq!(tip.lines, vec![tip_line("Linen Cloth", None), tip_line("Trade Goods", None)]);
+    // "q9" is not a quality (0-8): it is the item name.
+    let (_, tip) = parse_item_tooltip("1", "q9\nx").unwrap();
+    assert_eq!(tip.quality, None);
+    assert_eq!(tip.name(), Some("q9"));
+}
+
+#[test]
+fn garbled_item_tooltip_payloads_are_rejected() {
+    assert_eq!(parse_item_tooltip("", "Linen Cloth"), None, "no id");
+    assert_eq!(parse_item_tooltip("12a", "Linen Cloth"), None, "id is not a number");
+    assert_eq!(parse_item_tooltip("2589", ""), None, "no lines");
+    assert_eq!(parse_item_tooltip("2589", "q3\n \n"), None, "only the quality");
+    assert_eq!(parse_item_tooltip("2589", "\tright only"), None, "no name");
+}
+
+#[test]
+fn item_frames_are_never_chat_rows_and_fill_the_tooltips() {
+    let all = vec![
+        msg("Trade", "wts ore"),
+        item_frame("2770", "q1\nCopper Ore"),
+        log_msg("*Loot", "You receive loot: x"),
+        item_frame("bad", "garbled"),
+    ];
+    let (rest, tips) = split_item_frames(&all);
+    assert_eq!(rest, vec![all[0].clone(), all[2].clone()], "item frames (valid or not) never reach the pipeline");
+    assert_eq!(tips.len(), 1);
+    assert_eq!(tips[0].0, 2770);
+    assert_eq!(tips[0].1.name(), Some("Copper Ore"));
+    // Whatever the log option is, an *Item frame is not a log nor a chat line.
+    assert!(is_item_channel("*Item"));
+    assert!(!is_item_channel("Item"), "a player channel named Item stays chat");
+    assert!(!is_log_channel("*Item"));
+    for show_log in [false, true] {
+        let shown = filter_log_messages(&rest, show_log);
+        assert!(shown.iter().all(|m| !is_item_channel(&m.channel)));
+    }
+}
+
+#[test]
+fn messages_without_item_frames_pass_through_unchanged() {
+    let all = vec![msg("Trade", "wts ore"), log_msg("*System", "AFK"), msg("Say", "hi")];
+    let (rest, tips) = split_item_frames(&all);
+    assert_eq!(rest, all);
+    assert!(tips.is_empty());
+}
+
+#[test]
+fn tooltip_cache_is_bounded_and_drops_the_oldest() {
+    let mut cache = ItemTooltipCache::default();
+    let tip = |name: &str| ItemTooltip { quality: None, lines: vec![tip_line(name, None)] };
+    for id in 0..(TOOLTIP_CACHE_CAP as u64 + 10) {
+        cache.insert(id, tip("x"));
+    }
+    assert_eq!(cache.len(), TOOLTIP_CACHE_CAP);
+    assert!(cache.get(0).is_none(), "oldest evicted");
+    assert!(cache.get(9).is_none());
+    assert!(cache.get(10).is_some());
+    // Re-inserting an id replaces it and makes it the newest.
+    cache.insert(10, tip("new"));
+    assert_eq!(cache.len(), TOOLTIP_CACHE_CAP);
+    assert_eq!(cache.get(10).unwrap().name(), Some("new"));
+    cache.insert(99_999, tip("y"));
+    assert!(cache.get(10).is_some(), "refreshed id survives the next eviction");
+    assert!(cache.get(11).is_none());
+}
+
+#[test]
+fn item_tooltips_pref_defaults_off_and_round_trips() {
+    assert_eq!(Config::default().prefs.item_tooltips, ItemTooltips::Off);
+    let dir = scratch("itemtips");
+    let path = dir.join("config.json");
+    let mut c = Config::default();
+    c.prefs.item_tooltips = ItemTooltips::Addon;
+    prefs::save(&path, &c).unwrap();
+    let raw = std::fs::read_to_string(&path).unwrap();
+    assert!(raw.contains("\"itemTooltips\": \"addon\""), "{raw}");
+    assert_eq!(prefs::load(&path).prefs.item_tooltips, ItemTooltips::Addon);
+    std::fs::write(&path, r#"{"prefs":{"fontSize":14,"showLog":true}}"#).unwrap();
+    assert_eq!(prefs::load(&path).prefs.item_tooltips, ItemTooltips::Off, "missing key means off");
+    std::fs::write(&path, r#"{"prefs":{"fontSize":14,"showLog":true,"itemTooltips":"later-source"}}"#).unwrap();
+    let loaded = prefs::load(&path);
+    assert_eq!(loaded.prefs.item_tooltips, ItemTooltips::Off, "unknown value means off");
+    assert!(loaded.prefs.show_log, "an unknown value never resets the other prefs");
+    assert_eq!(loaded.prefs.font_size, 14.0);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+fn item_ref(name: &str, id: u64) -> LinkRef {
+    LinkRef { name: name.into(), kind: "item".into(), id }
+}
+
+#[test]
+fn text_splits_into_plain_and_link_segments() {
+    let bar = item_ref("[Arcanite Bar]", 12360);
+    let ore = item_ref("[Copper Ore]", 2770);
+    let segs = link_segments("vendo [Arcanite Bar] y [Copper Ore], [Arcanite Bar] barato", &[bar.clone(), ore.clone()]);
+    assert_eq!(
+        segs,
+        vec![
+            Segment::Text("vendo ".into()),
+            Segment::Link("[Arcanite Bar]".into(), bar.clone()),
+            Segment::Text(" y ".into()),
+            Segment::Link("[Copper Ore]".into(), ore),
+            Segment::Text(", ".into()),
+            Segment::Link("[Arcanite Bar]".into(), bar.clone()),
+            Segment::Text(" barato".into()),
+        ]
+    );
+    // Typed brackets that match no link stay text; a link at the very start/end works.
+    assert_eq!(
+        link_segments("[Arcanite Bar][cheap]", std::slice::from_ref(&bar)),
+        vec![Segment::Link("[Arcanite Bar]".into(), bar.clone()), Segment::Text("[cheap]".into())]
+    );
+    assert_eq!(link_segments("sin enlaces", std::slice::from_ref(&bar)), vec![Segment::Text("sin enlaces".into())]);
+    assert_eq!(link_segments("", std::slice::from_ref(&bar)), vec![]);
+    assert_eq!(link_segments("[Arcanite Bar]", &[]), vec![Segment::Text("[Arcanite Bar]".into())]);
+}
+
+#[test]
+fn longest_link_name_wins_at_the_same_place() {
+    let short = item_ref("[Bar]", 1);
+    let long = item_ref("[Bar] of Doom", 2);
+    let segs = link_segments("x [Bar] of Doom", &[short, long.clone()]);
+    assert_eq!(segs, vec![Segment::Text("x ".into()), Segment::Link("[Bar] of Doom".into(), long)]);
+}
+
+#[test]
+fn pipeline_items_still_carry_their_link_refs() {
+    // Existing behavior the tooltip view relies on: an item's links keep name, type, id.
+    let mut p = Pipeline::new("es");
+    p.add_messages(&[msg("Trade", REF_LINK)]);
+    let UiEvent::Add(item) = &p.take_events()[0] else { panic!("add") };
+    assert_eq!(item.links, vec![item_ref("[Arcanite Bar]", 12360)]);
+    assert_eq!(item.original, "wts [Arcanite Bar] cheap");
+}

@@ -244,20 +244,158 @@ local logQueue = {}
 local seq = math.random(0, 4095)
 local shownAt = 0
 
-local function showNext(from)
-  local payload = table.remove(from, 1)
+local function showPayload(payload)
   seq = (seq + 1) % 4096
   draw(encodeFrame(seq, payload))
   shownAt = GetTime()
 end
 
+local function showNext(from)
+  showPayload(table.remove(from, 1))
+end
+
+-- Item tooltips ------------------------------------------------------------------
+-- Each item linked in a queued message (chat or log) gets ONE tooltip frame per game
+-- session, also at low priority: channel "*Item", empty class, player = the item id,
+-- text = "q<quality>\n" (when the game knows it) and then the game's tooltip lines,
+-- joined with "\n"; a right column follows its line after "\t". The first line is the
+-- item name. The tooltip is read from a hidden GameTooltip with the full link of the
+-- message (bonus ids kept). Items not cached yet are retried a few times.
+local ITEM_CHANNEL = "*Item"
+local MAX_TIP_QUEUE = 50
+local MAX_TIP_TRIES = 5
+local TIP_RETRY = 1 -- seconds between tries of an item not cached yet
+local tipPending = {} -- { link, id, tries, at }, oldest first
+local tipSeen = {} -- item id -> true once queued this session
+local getItemInfo = (C_Item and C_Item.GetItemInfo) or GetItemInfo
+local scanner
+
+-- Tooltip text without colors, textures or control characters (\n, \t, SEP...).
+local function tipText(s)
+  s = s:gsub("|c%x%x%x%x%x%x%x%x", "")
+  s = s:gsub("|cn[^:]*:", "")
+  s = s:gsub("|r", "")
+  s = s:gsub("|T.-|t", "")
+  s = s:gsub("|A.-|a", "")
+  s = s:gsub("%c", " ")
+  s = s:gsub("%s+", " ")
+  return strtrim(s)
+end
+
+local function noteItems(message)
+  for link, digits in message:gmatch("|H(item:(%d+)[^|]*)|h") do
+    local id = tonumber(digits)
+    if id and not tipSeen[id] then
+      tipSeen[id] = true
+      tipPending[#tipPending + 1] = { link = link, id = id, tries = 0, at = 0 }
+      if #tipPending > MAX_TIP_QUEUE then
+        tipSeen[table.remove(tipPending, 1).id] = nil -- may be queued again later
+      end
+    end
+  end
+end
+
+-- The tooltip lines of a link, or nil when the game has none (yet).
+local function scanTooltip(link)
+  if not scanner then
+    scanner = CreateFrame("GameTooltip", "WCTScanTooltip", nil, "GameTooltipTemplate")
+  end
+  scanner:SetOwner(WorldFrame, "ANCHOR_NONE")
+  scanner:ClearLines()
+  if not pcall(scanner.SetHyperlink, scanner, link) then
+    scanner:Hide()
+    return nil
+  end
+  local lines = {}
+  for i = 1, scanner:NumLines() do
+    local left = _G["WCTScanTooltipTextLeft" .. i]
+    local right = _G["WCTScanTooltipTextRight" .. i]
+    local l = left and left:GetText()
+    local r = right and right:IsShown() and right:GetText()
+    if issecretvalue and ((l and issecretvalue(l)) or (r and issecretvalue(r))) then
+      scanner:Hide()
+      return nil
+    end
+    l = type(l) == "string" and tipText(l) or ""
+    r = type(r) == "string" and tipText(r) or ""
+    if r ~= "" then
+      lines[#lines + 1] = l .. "\t" .. r
+    elseif l ~= "" then
+      lines[#lines + 1] = l
+    end
+  end
+  scanner:Hide()
+  if #lines == 0 or (RETRIEVING_ITEM_INFO and lines[1] == RETRIEVING_ITEM_INFO) then
+    return nil
+  end
+  return table.concat(lines, "\n")
+end
+
+local function tipPayload(t)
+  local quality
+  if getItemInfo then
+    local ok, name, _, q = pcall(getItemInfo, t.link)
+    if not ok or type(name) ~= "string" or (issecretvalue and issecretvalue(name)) then
+      if C_Item and C_Item.RequestLoadItemDataByID then
+        pcall(C_Item.RequestLoadItemDataByID, t.id)
+      end
+      return nil
+    end
+    quality = q
+  end
+  local text = scanTooltip(t.link)
+  if not text then
+    return nil
+  end
+  if type(quality) == "number" and quality >= 0 and quality <= 8 then
+    text = "q" .. math.floor(quality) .. "\n" .. text
+  end
+  return cutUtf8(table.concat({ VERSION, ITEM_CHANNEL, "", tostring(t.id), text }, SEP), MAX_PAYLOAD)
+end
+
+-- The next ready tooltip payload; scans one item at most per call.
+local function nextTip(now)
+  for _ = 1, #tipPending do
+    local t = table.remove(tipPending, 1)
+    if t.at <= now then
+      local payload = tipPayload(t)
+      if payload then
+        return payload
+      end
+      t.tries = t.tries + 1
+      if t.tries < MAX_TIP_TRIES then
+        t.at = now + TIP_RETRY
+        tipPending[#tipPending + 1] = t
+      else
+        tipSeen[t.id] = nil -- given up; a later link may try again
+      end
+      return nil
+    end
+    tipPending[#tipPending + 1] = t
+  end
+  return nil
+end
+
+-- Chat first; then log lines and tooltips take turns.
+local tipTurn = false
 strip:SetScript("OnUpdate", function()
-  if GetTime() - shownAt < db.hold then
+  local now = GetTime()
+  if now - shownAt < db.hold then
     return
   end
   if #queue > 0 then
     showNext(queue)
-  elseif #logQueue > 0 then
+    return
+  end
+  tipTurn = not tipTurn
+  if (tipTurn or #logQueue == 0) and #tipPending > 0 then
+    local payload = nextTip(now)
+    if payload then
+      showPayload(payload)
+      return
+    end
+  end
+  if #logQueue > 0 then
     showNext(logQueue)
   end
 end)
@@ -275,15 +413,19 @@ local function push(channel, class, player, message)
   local payload = payloadOf(channel, class, player, message)
   if payload then
     queue[#queue + 1] = payload
+    noteItems(message)
   end
 end
 
+-- Log labels go with a "*" prefix ("*Loot"): channel names cannot contain it, so the
+-- app never mistakes a player channel called "Loot" for the log.
 local function pushLog(channel, player, message)
-  local payload = payloadOf(channel, "", player, message)
+  local payload = payloadOf("*" .. channel, "", player, message)
   if not payload then
     return
   end
   logQueue[#logQueue + 1] = payload
+  noteItems(message)
   if #logQueue > MAX_LOG_QUEUE then
     table.remove(logQueue, 1)
   end

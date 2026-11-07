@@ -5,7 +5,7 @@ use wow_chat_translator::app::debug_log::{iso_utc, DebugLog};
 use wow_chat_translator::app::game_watcher::{GameChange, GameWatcher};
 use wow_chat_translator::app::messages::{badge, can_translate, flip_label, row_mode, shows_translation, BadgeKind, MessageList, Mode, Tab, MAX_ITEMS};
 use wow_chat_translator::app::presence::PresenceGate;
-use wow_chat_translator::app::style::{channel_label, class_color, hhmm, tab_color, translator_label, ReaderState};
+use wow_chat_translator::app::style::{channel_label, class_color, hhmm, item_quality_color, tab_color, translator_label, ReaderState, LINK_GOLD};
 use wow_chat_translator::core::pipeline::{ItemPatch, OverlayItem, Status, UiEvent};
 use wow_chat_translator::core::prefs::TranslatorSettings;
 
@@ -728,4 +728,16 @@ mod e5 {
         assert_eq!(copied_message("hello"), "✓ Copiado: «hello». En WoW: Enter → Ctrl+V → Enter");
         assert_eq!(failed_message("sin red"), "No se pudo traducir: sin red");
     }
+}
+
+#[test]
+fn item_links_use_the_wow_quality_colors() {
+    assert_eq!(item_quality_color(Some(0)).to_hex(), "#9d9d9dff");
+    assert_eq!(item_quality_color(Some(2)).to_hex(), "#1eff00ff");
+    assert_eq!(item_quality_color(Some(4)).to_hex(), "#a335eeff");
+    assert_eq!(item_quality_color(Some(5)).to_hex(), "#ff8000ff");
+    assert_eq!(item_quality_color(None), LINK_GOLD, "unknown quality: link gold");
+    assert_eq!(LINK_GOLD.to_hex(), "#ffd100ff");
+    // Existing colors unchanged.
+    assert_eq!(class_color(Some("MAGE")).to_hex(), "#3fc7ebff");
 }
