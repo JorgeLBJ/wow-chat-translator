@@ -10,6 +10,7 @@ use eframe::egui::{
 };
 use egui_twemoji::EmojiLabel;
 
+use crate::core::channels::log_label;
 use crate::core::pipeline::{OverlayItem, Status, UiEvent};
 use crate::core::prefs::Bounds;
 
@@ -140,8 +141,38 @@ impl OverlayApp {
                             provider: Some("google".into()),
                             fallback_reason: None,
                             error: None,
+                            links: Vec::new(),
                         };
                         model.list.apply(UiEvent::Add(item), &|_| "15:38".into());
+                    }
+                    // With the log option on, a few Registro lines too.
+                    if self.shared.config().prefs.show_log {
+                        let log = [
+                            ("*Loot", "", "Recibes botín: [Mineral de cobre]x2."),
+                            ("*Money", "", "Recibes botín: 1 de plata, 25 de cobre."),
+                            ("*Reputation", "", "Reputación con Ventormenta aumentada en 25."),
+                            ("*NPC", "Guardia de Ventormenta", "¡Mantente alerta, ciudadano!"),
+                            ("*System", "", "Ya no estás ausente."),
+                        ];
+                        for (i, (channel, player, text)) in log.into_iter().enumerate() {
+                            let item = OverlayItem {
+                                id: 900_100 + i as u64,
+                                time: 0,
+                                channel: channel.into(),
+                                tab: Some("log"),
+                                class: None,
+                                player: player.into(),
+                                original: text.into(),
+                                translated: None,
+                                lang: None,
+                                status: Status::Done,
+                                provider: None,
+                                fallback_reason: None,
+                                error: None,
+                                links: Vec::new(),
+                            };
+                            model.list.apply(UiEvent::Add(item), &|_| "15:39".into());
+                        }
                     }
                 }
                 _ if part == "compose" => {
@@ -269,11 +300,15 @@ impl OverlayApp {
 
     fn tabs(&mut self, ui: &mut Ui) {
         let mut clicked = None;
+        let show_log = self.shared.config().prefs.show_log;
         {
             let model = self.shared.model();
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 2.0;
                 for tab in Tab::ALL {
+                    if tab == Tab::Log && !show_log {
+                        continue;
+                    }
                     let on = model.list.active() == tab;
                     let resp = tab_button(ui, tab.label(), on, model.list.unread_badge(tab));
                     if resp.clicked() {
@@ -737,12 +772,17 @@ fn message_row(ui: &mut Ui, row: &Row, mode: Mode, fs: f32, force_hover: bool) -
             ui.vertical(|ui| {
                 ui.horizontal_wrapped(|ui| {
                     ui.spacing_mut().item_spacing.x = 0.0;
+                    // Log lines: neutral chip with a Spanish label, player only when present.
+                    let log = log_label(&item.channel);
                     let tab_c = tab_color(item.tab);
-                    chip(ui, &channel_label(&item.channel), widgets::semibold(fs * 0.8), tab_c, with_alpha(tab_c, 0x22), vec2(5.0, 0.0), 4, body_h, Sense::hover());
+                    let label = log.map_or_else(|| channel_label(&item.channel), str::to_string);
+                    chip(ui, &label, widgets::semibold(fs * 0.8), tab_c, with_alpha(tab_c, 0x22), vec2(5.0, 0.0), 4, body_h, Sense::hover());
                     ui.add_space(5.0);
-                    ui.add(
-                        egui::Label::new(RichText::new(&item.player).family(widgets::semibold_family()).color(class_color(item.class.as_deref()))),
-                    );
+                    if log.is_none() || !item.player.is_empty() {
+                        ui.add(
+                            egui::Label::new(RichText::new(&item.player).family(widgets::semibold_family()).color(class_color(item.class.as_deref()))),
+                        );
+                    }
                     if let Some(b) = badge(item, show_t) {
                         let (fg, bg) = match b.kind {
                             BadgeKind::Error => (style::ERROR_TEXT, style::ERROR_BG),
@@ -754,7 +794,8 @@ fn message_row(ui: &mut Ui, row: &Row, mode: Mode, fs: f32, force_hover: bool) -
                     }
                     let text = if show_t { item.translated.as_deref().unwrap_or("") } else { &item.original };
                     let color = if item.status == Status::Pending { style::TEXT.gamma_multiply(0.55) } else { style::TEXT };
-                    EmojiLabel::new(RichText::new(format!(": {text}")).color(color)).show(ui);
+                    let shown = if log.is_some() && item.player.is_empty() { text.to_string() } else { format!(": {text}") };
+                    EmojiLabel::new(RichText::new(shown).color(color)).show(ui);
                 });
                 if hovered && show_t {
                     ui.add(

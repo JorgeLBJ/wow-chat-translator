@@ -36,6 +36,7 @@ pub(super) const HINT: Color32 = Color32::from_rgb(0x6b, 0x74, 0x80);
 const OK: Color32 = Color32::from_rgb(0x86, 0xef, 0xac);
 const ERR: Color32 = Color32::from_rgb(0xfc, 0xa5, 0xa5);
 const CAPTURE_NOTE: &str = "Útil para streams: la ventana no saldrá en capturas ni grabaciones.";
+const LOG_NOTE: &str = "Muestra también botín, oro, sistema, logros y PNJ en la pestaña Registro (sin traducir).";
 const STRIP_NOTE: &str = "El addon envía el chat como una franja diminuta de colores en la esquina superior izquierda de WoW. No pongas ninguna ventana encima de esa esquina.";
 
 pub fn viewport_id() -> ViewportId {
@@ -524,6 +525,12 @@ fn general_pane(ui: &mut Ui, shared: &Arc<Shared>) {
                 }
                 Err(e) => shared.log.write(&format!("autostart failed: {e}")),
             }
+        }
+    });
+    let mut show_log = shared.config().prefs.show_log;
+    row(ui, "Registro del chat", LOG_NOTE, |ui| {
+        if switch(ui, &mut show_log).changed() {
+            shared.set_show_log(show_log);
         }
     });
     row(ui, "Mensajes", "Borra la lista de mensajes de la ventana del chat.", |ui| {

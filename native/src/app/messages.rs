@@ -4,6 +4,7 @@
 
 use std::collections::VecDeque;
 
+use crate::core::channels::LOG_TAB;
 use crate::core::pipeline::{OverlayItem, Status, UiEvent};
 
 pub const MAX_ITEMS: usize = 300;
@@ -16,10 +17,14 @@ pub enum Tab {
     Guild,
     Group,
     Whisper,
+    /// Non-player chat (loot, system, NPC...); shown only when the log option is on.
+    Log,
 }
 
+const TABS: usize = 7;
+
 impl Tab {
-    pub const ALL: [Tab; 6] = [Tab::All, Tab::General, Tab::Trade, Tab::Guild, Tab::Group, Tab::Whisper];
+    pub const ALL: [Tab; TABS] = [Tab::All, Tab::General, Tab::Trade, Tab::Guild, Tab::Group, Tab::Whisper, Tab::Log];
 
     /// The pipeline's tab key (`OverlayItem::tab`); `None` for "Todos".
     pub fn key(self) -> Option<&'static str> {
@@ -30,6 +35,7 @@ impl Tab {
             Tab::Guild => Some("guild"),
             Tab::Group => Some("group"),
             Tab::Whisper => Some("whisper"),
+            Tab::Log => Some(LOG_TAB),
         }
     }
 
@@ -41,6 +47,7 @@ impl Tab {
             Tab::Guild => "Hermandad",
             Tab::Group => "Grupo",
             Tab::Whisper => "Susurros",
+            Tab::Log => "Registro",
         }
     }
 
@@ -70,13 +77,13 @@ pub struct Row {
 #[derive(Debug, Clone)]
 pub struct MessageList {
     rows: VecDeque<Row>,
-    unread: [u32; 6],
+    unread: [u32; TABS],
     active: Tab,
 }
 
 impl Default for MessageList {
     fn default() -> Self {
-        Self { rows: VecDeque::new(), unread: [0; 6], active: Tab::All }
+        Self { rows: VecDeque::new(), unread: [0; TABS], active: Tab::All }
     }
 }
 
@@ -151,6 +158,15 @@ impl MessageList {
 
     pub fn clear(&mut self) {
         self.rows.clear();
+    }
+
+    /// Removes the log rows and leaves the "Registro" tab (the log option was turned off).
+    pub fn drop_log(&mut self) {
+        self.rows.retain(|r| r.item.tab != Some(LOG_TAB));
+        self.unread[Tab::Log.index()] = 0;
+        if self.active == Tab::Log {
+            self.active = Tab::All;
+        }
     }
 }
 

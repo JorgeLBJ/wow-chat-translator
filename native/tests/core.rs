@@ -3,12 +3,12 @@
 
 use std::cell::{Cell, RefCell};
 
-use wow_chat_translator::core::channels::channel_tab;
+use wow_chat_translator::core::channels::{channel_tab, is_log_channel, log_label};
 use wow_chat_translator::core::emoji::replace_shortcodes;
 use wow_chat_translator::core::language::looks_spanish;
-use wow_chat_translator::core::links::{only_links, protect_marked_links, restore_links, strip_link_markers};
+use wow_chat_translator::core::links::{marked_link_refs, only_links, protect_marked_links, restore_links, strip_link_markers, LinkRef};
 use wow_chat_translator::core::pipeline::{
-    ItemPatch, Job, OverlayItem, Pipeline, Status, Translation, Translator, UiEvent,
+    filter_log_messages, ItemPatch, Job, OverlayItem, Pipeline, Status, Translation, Translator, UiEvent,
 };
 use wow_chat_translator::core::prefs::{self, Bounds, Config};
 use wow_chat_translator::strip::Message;
@@ -519,5 +519,126 @@ fn hide_from_capture_defaults_off_and_persists() {
     assert!(prefs::load(&path).prefs.hide_from_capture);
     std::fs::write(&path, r#"{"prefs":{"fontSize":14}}"#).unwrap();
     assert!(!prefs::load(&path).prefs.hide_from_capture, "missing key means off");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ---------------------------------------------------------------- chat log (Registro) and link refs
+
+const REF_LINK: &str = "wts \u{2}[Arcanite Bar]\u{4}item:12360\u{3} cheap";
+
+fn log_msg(channel: &str, text: &str) -> Message {
+    Message { channel: channel.into(), class: None, player: String::new(), text: text.into() }
+}
+
+#[test]
+fn link_refs_are_never_shown() {
+    assert_eq!(strip_link_markers(REF_LINK), "wts [Arcanite Bar] cheap");
+    let (masked, links) = protect_marked_links(REF_LINK);
+    assert_eq!(masked, "wts [0] cheap");
+    assert_eq!(links, vec!["[Arcanite Bar]".to_string()]);
+    assert_eq!(restore_links("vendo [0] barato", &links), "vendo [Arcanite Bar] barato");
+}
+
+#[test]
+fn old_link_form_still_decodes_and_has_no_ref() {
+    let old = "wts \u{2}[Arcanite Bar]\u{3} cheap";
+    assert_eq!(strip_link_markers(old), "wts [Arcanite Bar] cheap");
+    assert_eq!(protect_marked_links(old), ("wts [0] cheap".to_string(), vec!["[Arcanite Bar]".to_string()]));
+    assert_eq!(marked_link_refs(old), Vec::<LinkRef>::new());
+}
+
+#[test]
+fn link_refs_expose_type_and_id() {
+    let text = "\u{2}[Linen Cloth]\u{4}item:2589\u{3} and \u{2}[Old]\u{3} and \u{2}[Quest]\u{4}quest:42\u{3}";
+    assert_eq!(
+        marked_link_refs(text),
+        vec![
+            LinkRef { name: "[Linen Cloth]".into(), kind: "item".into(), id: 2589 },
+            LinkRef { name: "[Quest]".into(), kind: "quest".into(), id: 42 },
+        ]
+    );
+    // A malformed ref is ignored but never shown.
+    let bad = "\u{2}[X]\u{4}item:abc\u{3}";
+    assert_eq!(marked_link_refs(bad), Vec::<LinkRef>::new());
+    assert_eq!(strip_link_markers(bad), "[X]");
+}
+
+#[test]
+fn log_channels_map_to_the_log_tab() {
+    for channel in ["*Loot", "*Money", "*Currency", "*System", "*XP", "*Reputation", "*Skill", "*Achievement", "*NPC", "*BossEmote", "*Emote"] {
+        assert!(is_log_channel(channel), "{channel}");
+        assert_eq!(channel_tab(channel), Some("log"), "{channel}");
+        assert!(log_label(channel).is_some(), "{channel}");
+    }
+    assert_eq!(log_label("*Loot"), Some("Botín"));
+    assert_eq!(log_label("Trade"), None);
+    // A player-made channel with a log-like name is player chat (only the addon
+    // prefixes log labels with "*", which channel names cannot contain).
+    for custom in ["Loot", "System", "XP", "NPC"] {
+        assert!(!is_log_channel(custom), "{custom}");
+        assert_eq!(channel_tab(custom), None, "{custom}");
+    }
+    assert!(!is_log_channel("Trade"));
+    assert!(!is_log_channel("Say"));
+}
+
+#[test]
+fn log_messages_are_done_untranslated_and_make_no_job() {
+    for paused in [false, true] {
+        let mut p = pipeline(paused);
+        p.add_messages(&[log_msg("*Loot", "You receive loot: \u{2}[Linen Cloth]\u{4}item:2589\u{3}.")]);
+        assert!(p.take_jobs().is_empty());
+        let ev = p.take_events();
+        assert_eq!(ev.len(), 1);
+        let UiEvent::Add(item) = &ev[0] else { panic!("add") };
+        assert_eq!(item.status, Status::Done);
+        assert_eq!(item.tab, Some("log"));
+        assert_eq!(item.player, "");
+        assert_eq!(item.class, None);
+        assert_eq!(item.translated, None);
+        assert_eq!(item.lang, None);
+        assert_eq!(item.original, "You receive loot: [Linen Cloth].");
+        assert_eq!(item.links, vec![LinkRef { name: "[Linen Cloth]".into(), kind: "item".into(), id: 2589 }]);
+        assert!(!p.translate_by_id(item.id), "log items are never translated on demand");
+    }
+}
+
+#[test]
+fn chat_with_a_link_ref_still_translates() {
+    let tr = FakeTranslator::new();
+    let mut p = pipeline(false);
+    p.add_messages(&[msg("Trade", REF_LINK)]);
+    run(&mut p, &tr);
+    assert_eq!(*tr.calls.borrow(), vec!["wts [0] cheap".to_string()]);
+    let ev = p.take_events();
+    let UiEvent::Add(item) = &ev[0] else { panic!("add") };
+    assert_eq!(item.tab, Some("trade"));
+    assert_eq!(item.original, "wts [Arcanite Bar] cheap");
+    assert_eq!(item.links, vec![LinkRef { name: "[Arcanite Bar]".into(), kind: "item".into(), id: 12360 }]);
+    let UiEvent::Update(_, patch) = &ev[1] else { panic!("update") };
+    assert_eq!(patch.translated.as_deref(), Some("ES(wts [Arcanite Bar] cheap)"));
+}
+
+#[test]
+fn log_messages_are_dropped_when_the_log_is_off() {
+    let all = vec![msg("Trade", "wts ore"), log_msg("*System", "You are now AFK."), msg("Say", "hi")];
+    let off = filter_log_messages(&all, false);
+    assert_eq!(off, vec![all[0].clone(), all[2].clone()]);
+    assert_eq!(filter_log_messages(&all, true), all);
+}
+
+#[test]
+fn show_log_defaults_off_and_persists() {
+    assert!(!Config::default().prefs.show_log);
+    let dir = scratch("showlog");
+    let path = dir.join("config.json");
+    let mut c = Config::default();
+    c.prefs.show_log = true;
+    prefs::save(&path, &c).unwrap();
+    let raw = std::fs::read_to_string(&path).unwrap();
+    assert!(raw.contains("\"showLog\": true"), "{raw}");
+    assert!(prefs::load(&path).prefs.show_log);
+    std::fs::write(&path, r#"{"prefs":{"fontSize":14}}"#).unwrap();
+    assert!(!prefs::load(&path).prefs.show_log, "missing key means off");
     let _ = std::fs::remove_dir_all(&dir);
 }

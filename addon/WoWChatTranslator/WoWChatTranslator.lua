@@ -3,6 +3,9 @@
 -- cells at the top-left of the screen, which the app decodes exactly (no OCR).
 -- The format must match app/src/core/strip.js (see that file for the layout); its
 -- design is informed by Parley's documented protocol (MIT) and LibSerpix (MIT).
+-- Besides player chat it also sends, at lower priority, the rest of the chat (loot,
+-- money, system, XP, reputation, achievements, NPC speech, emotes); the app shows those
+-- only when its "Registro del chat" option is on.
 
 local ADDON = ...
 
@@ -37,19 +40,60 @@ local EVENT_CHANNEL = {
   CHAT_MSG_CHANNEL = false, -- resolved from the channel name
 }
 
+-- Non-player chat (the app's optional "Registro" tab). Sent on a low-priority queue,
+-- never translated; the sender may be empty and the player's own lines are kept.
+local LOG_CHANNEL = {
+  CHAT_MSG_LOOT = "Loot",
+  CHAT_MSG_MONEY = "Money",
+  CHAT_MSG_CURRENCY = "Currency",
+  CHAT_MSG_SYSTEM = "System",
+  CHAT_MSG_COMBAT_XP_GAIN = "XP",
+  CHAT_MSG_COMBAT_FACTION_CHANGE = "Reputation",
+  CHAT_MSG_SKILL = "Skill",
+  CHAT_MSG_ACHIEVEMENT = "Achievement",
+  CHAT_MSG_GUILD_ACHIEVEMENT = "Achievement",
+  CHAT_MSG_MONSTER_SAY = "NPC",
+  CHAT_MSG_MONSTER_YELL = "NPC",
+  CHAT_MSG_MONSTER_WHISPER = "NPC",
+  CHAT_MSG_MONSTER_EMOTE = "NPC",
+  CHAT_MSG_RAID_BOSS_EMOTE = "BossEmote",
+  CHAT_MSG_RAID_BOSS_WHISPER = "BossEmote",
+  CHAT_MSG_EMOTE = "Emote",
+  CHAT_MSG_TEXT_EMOTE = "Emote",
+}
+-- Log events whose text does not name the speaker: the sender goes in the player field.
+local LOG_SPEAKER = {
+  CHAT_MSG_MONSTER_SAY = true,
+  CHAT_MSG_MONSTER_YELL = true,
+  CHAT_MSG_MONSTER_WHISPER = true,
+  CHAT_MSG_RAID_BOSS_WHISPER = true,
+  CHAT_MSG_EMOTE = true,
+}
+local MAX_LOG_QUEUE = 200 -- a raid burst drops the oldest log lines, never chat
+
 local db
 
 -- Text cleanup ----------------------------------------------------------------
 -- Removes color codes, textures and raid icons. Real links (|H...|h[Name]|h) are
 -- wrapped in \2 ... \3, characters players cannot type, so the app keeps only real
 -- link names untranslated; brackets a player types by hand are ordinary text.
-local LINK_OPEN, LINK_CLOSE = "\2", "\3"
+-- A link with a numeric id also carries its type and that id after \4, as in
+-- \2[Arcanite Bar]\4item:12360\3 (never shown by the app; used for item data).
+local LINK_OPEN, LINK_REF, LINK_CLOSE = "\2", "\4", "\3"
+local function markLink(link, name)
+  local kind, id = link:match("^(%a+):(%d+)")
+  if kind then
+    return LINK_OPEN .. name .. LINK_REF .. kind .. ":" .. id .. LINK_CLOSE
+  end
+  return LINK_OPEN .. name .. LINK_CLOSE
+end
+
 local function sanitize(text)
-  text = text:gsub("[\2\3]", "")
+  text = text:gsub("[\2\3\4]", "")
   text = text:gsub("|c%x%x%x%x%x%x%x%x", "")
   text = text:gsub("|cn[^:]*:", "") -- named colors, e.g. item quality "|cnIQ1:"
   text = text:gsub("|r", "")
-  text = text:gsub("|H.-|h(.-)|h", LINK_OPEN .. "%1" .. LINK_CLOSE)
+  text = text:gsub("|H(.-)|h(.-)|h", markLink)
   text = text:gsub("|T.-|t", "")
   text = text:gsub("|A.-|a", "")
   text = text:gsub("{.-}", "")
@@ -193,30 +237,56 @@ end
 -- Queue: each message is drawn for db.hold seconds, then the next one. With nothing
 -- queued the last frame stays (the app ignores a sequence number it already read).
 -- An empty payload is the idle frame: it tells the app the addon is running.
+-- Player chat goes first: the log queue is only drawn while the chat queue is empty,
+-- so a log line delays chat by one hold at most.
 local queue = {}
+local logQueue = {}
 local seq = math.random(0, 4095)
 local shownAt = 0
 
-local function showNext()
-  local payload = table.remove(queue, 1)
+local function showNext(from)
+  local payload = table.remove(from, 1)
   seq = (seq + 1) % 4096
   draw(encodeFrame(seq, payload))
   shownAt = GetTime()
 end
 
 strip:SetScript("OnUpdate", function()
-  if #queue > 0 and GetTime() - shownAt >= db.hold then
-    showNext()
+  if GetTime() - shownAt < db.hold then
+    return
+  end
+  if #queue > 0 then
+    showNext(queue)
+  elseif #logQueue > 0 then
+    showNext(logQueue)
   end
 end)
 
-local function push(channel, class, player, message)
+local function payloadOf(channel, class, player, message)
   local clean = sanitize(message)
   if clean == "" then
-    return
+    return nil
   end
   local payload = table.concat({ VERSION, channel, class, player, clean }, SEP)
-  queue[#queue + 1] = cutUtf8(payload, MAX_PAYLOAD)
+  return cutUtf8(payload, MAX_PAYLOAD)
+end
+
+local function push(channel, class, player, message)
+  local payload = payloadOf(channel, class, player, message)
+  if payload then
+    queue[#queue + 1] = payload
+  end
+end
+
+local function pushLog(channel, player, message)
+  local payload = payloadOf(channel, "", player, message)
+  if not payload then
+    return
+  end
+  logQueue[#logQueue + 1] = payload
+  if #logQueue > MAX_LOG_QUEUE then
+    table.remove(logQueue, 1)
+  end
 end
 
 -- Events -------------------------------------------------------------------------
@@ -240,10 +310,13 @@ events:SetScript("OnEvent", function(_, event, ...)
     db = WCT_DB
     layout()
     queue[1] = "" -- idle frame
-    showNext()
+    showNext(queue)
+    -- Some events do not exist on every client; ignore those.
     for chatEvent in pairs(EVENT_CHANNEL) do
-      -- Some events do not exist on every client; ignore those.
       pcall(events.RegisterEvent, events, chatEvent)
+    end
+    for logEvent in pairs(LOG_CHANNEL) do
+      pcall(events.RegisterEvent, events, logEvent)
     end
     return
   end
@@ -256,6 +329,22 @@ events:SetScript("OnEvent", function(_, event, ...)
 
   local text, sender = ...
   if issecretvalue and (issecretvalue(text) or issecretvalue(sender)) then
+    return
+  end
+  local logChannel = LOG_CHANNEL[event]
+  if logChannel then
+    if type(text) ~= "string" then
+      return
+    end
+    local name = (type(sender) == "string" and sender ~= "") and shortName(sender) or ""
+    if text:find("%s", 1, true) then
+      -- NPC/boss emotes: "%s goes into a frenzy!" names the speaker in the text.
+      text = text:gsub("%%s", (name:gsub("%%", "%%%%")))
+      name = ""
+    elseif not LOG_SPEAKER[event] then
+      name = "" -- loot, system... already name whoever it is about
+    end
+    pushLog(logChannel, name, text)
     return
   end
   if type(text) ~= "string" or type(sender) ~= "string" or sender == "" then
@@ -279,6 +368,14 @@ local SAMPLES = {
   { "Guild", "SHAMAN", "Pedrinho", "bora fazer raid hoje à noite" },
   { "Party", "WARLOCK", "Schatten", "ich brauche noch Mana, kurz warten {rt1}" },
   { "General", "", "Volkov", "lol LFM ZG need heal" },
+}
+
+local LOG_SAMPLES = {
+  { "Loot", "", "You receive loot: |cff9d9d9d|Hitem:2589::::::::|h[Linen Cloth]|h|rx2." },
+  { "Money", "", "You loot 1 Silver, 25 Copper" },
+  { "Reputation", "", "Reputation with Stormwind increased by 25." },
+  { "NPC", "Stormwind Guard", "Stay alert, citizen!" },
+  { "System", "", "You are no longer Away." },
 }
 
 local function say(msg)
@@ -306,8 +403,13 @@ SlashCmdList.WOWCHATTRANSLATOR = function(input)
       push(s[1], s[2], s[3], s[4])
     end
     say("6 test messages queued")
+  elseif cmd == "testlog" then
+    for _, s in ipairs(LOG_SAMPLES) do
+      pushLog(s[1], s[2], s[3])
+    end
+    say(#LOG_SAMPLES .. " test log lines queued (shown when the app's Registro is on)")
   else
-    say("/wct (show/hide) | cell <1-4> | hold <0.05-1> | reset | test")
+    say("/wct (show/hide) | cell <1-4> | hold <0.05-1> | reset | test | testlog")
     return
   end
   layout()

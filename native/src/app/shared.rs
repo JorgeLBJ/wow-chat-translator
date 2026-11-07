@@ -9,7 +9,7 @@ use std::time::Instant;
 
 use eframe::egui;
 
-use crate::core::pipeline::{Job, Pipeline, Translation, Translator, UiEvent};
+use crate::core::pipeline::{filter_log_messages, Job, Pipeline, Translation, Translator, UiEvent};
 use crate::core::prefs::{self, Config};
 use crate::strip::Message;
 
@@ -169,9 +169,11 @@ impl Shared {
     // Pipeline -----------------------------------------------------------------------
 
     pub fn add_messages(&self, messages: &[Message]) {
+        let show_log = self.config().prefs.show_log;
+        let messages = filter_log_messages(messages, show_log);
         let jobs = {
             let mut model = self.model();
-            model.pipeline.add_messages(messages);
+            model.pipeline.add_messages(&messages);
             model.sync(&self.log);
             model.pipeline.take_jobs()
         };
@@ -219,6 +221,17 @@ impl Shared {
     }
 
     /// "Limpiar mensajes": empties the overlay list.
+    /// Turns the "Registro" option on or off; off also removes the log rows already shown.
+    pub fn set_show_log(&self, on: bool) {
+        self.config().prefs.show_log = on;
+        self.save_config();
+        if !on {
+            self.model().list.drop_log();
+        }
+        self.log.write(&format!("show log {on}"));
+        self.repaint();
+    }
+
     pub fn clear_messages(&self) {
         self.model().list.clear();
         self.log.write("messages cleared");

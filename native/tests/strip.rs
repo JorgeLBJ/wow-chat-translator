@@ -206,3 +206,15 @@ fn game_process_names_cover_every_flavor() {
         assert!(!is_wow_client_exe(exe), "{exe}");
     }
 }
+
+#[test]
+fn decodes_a_log_message_with_no_player() {
+    let raw = "v1\x1F*Loot\x1F\x1F\x1FYou receive loot: \x02[Linen Cloth]\x04item:2589\x03.";
+    let m = parse_payload(raw.as_bytes()).unwrap();
+    assert_eq!(m.channel, "*Loot");
+    assert_eq!(m.class, None);
+    assert_eq!(m.player, "");
+    assert_eq!(m.text, "You receive loot: \u{2}[Linen Cloth]\u{4}item:2589\u{3}.");
+    let frame = encode_frame(3, &build_payload(&m));
+    assert_eq!(decode_frame(&plain(&frame)), Some(Frame { seq: 3, message: Some(m) }));
+}

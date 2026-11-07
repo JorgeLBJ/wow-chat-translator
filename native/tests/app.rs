@@ -157,6 +157,7 @@ fn item(id: u64, tab: Option<&'static str>) -> OverlayItem {
         provider: None,
         fallback_reason: None,
         error: None,
+        links: Vec::new(),
     }
 }
 
@@ -215,6 +216,42 @@ fn list_filters_by_active_tab() {
     list.set_active(Tab::Guild);
     let ids: Vec<u64> = list.visible().map(|r| r.item.id).collect();
     assert_eq!(ids, vec![2]);
+}
+
+#[test]
+fn registro_tab_comes_after_susurros_and_shows_log_items() {
+    assert_eq!(Tab::ALL.last(), Some(&Tab::Log));
+    assert_eq!(Tab::ALL[Tab::ALL.len() - 2], Tab::Whisper);
+    assert_eq!(Tab::Log.label(), "Registro");
+    assert_eq!(Tab::Log.key(), Some("log"));
+    assert_eq!(Tab::from_key("log"), Some(Tab::Log));
+    let mut list = MessageList::default();
+    add(&mut list, 1, Some("trade"));
+    add(&mut list, 2, Some("log"));
+    assert_eq!(list.visible().count(), 2, "Todos includes log items");
+    list.set_active(Tab::Log);
+    let ids: Vec<u64> = list.visible().map(|r| r.item.id).collect();
+    assert_eq!(ids, vec![2]);
+    list.set_active(Tab::Trade);
+    add(&mut list, 3, Some("log"));
+    assert_eq!(list.unread_badge(Tab::Log), Some(1));
+}
+
+#[test]
+fn dropping_the_log_removes_log_rows_and_leaves_registro() {
+    let mut list = MessageList::default();
+    add(&mut list, 1, Some("trade"));
+    add(&mut list, 2, Some("log"));
+    add(&mut list, 3, None);
+    list.set_active(Tab::Log);
+    list.drop_log();
+    assert_eq!(list.active(), Tab::All);
+    let ids: Vec<u64> = list.visible().map(|r| r.item.id).collect();
+    assert_eq!(ids, vec![1, 3]);
+    // Another active tab is kept.
+    list.set_active(Tab::Trade);
+    list.drop_log();
+    assert_eq!(list.active(), Tab::Trade);
 }
 
 #[test]

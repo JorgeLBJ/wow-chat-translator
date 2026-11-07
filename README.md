@@ -39,6 +39,7 @@ y te deja contestar en inglés escribiendo en español.
 - 🌍 **Traducción al instante** de cualquier idioma al español: inglés, alemán, francés, portugués…
 - 🔁 **Traducido u original** con un clic, y pasa el ratón por encima de un mensaje para ver el texto original.
 - 🗂️ **Pestañas por canal**: Todos, General, Comercio, Hermandad, Grupo y Susurros.
+- 📜 **Registro del chat (opcional)**: activa *Ajustes → General → Registro del chat* para ver también botín, oro, sistema, experiencia, reputación, logros, PNJ y emociones en la pestaña **Registro**, sin traducir. Viene desactivado.
 - 🎨 **Colores de clase** y nombres como en el juego. Los enlaces de objetos, misiones y logros **no se traducen**.
 - 😄 **Emojis** como `:sob:` se ven como emojis de verdad.
 - ✍️ **Responde en inglés**: pulsa <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd>, escribe en español,

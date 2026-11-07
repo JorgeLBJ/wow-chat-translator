@@ -1,0 +1,30 @@
+# Chat log and item tooltips
+
+Objective: optionally show the rest of the WoW chat (loot, money, system, XP, reputation, achievements, NPC speech, emotes) and item tooltips on hover, so the overlay can replace the in-game chat frame.
+Branch: feat/chat-log-tooltips (from feat/egui-app = origin/main). Delivery: ask-on-risk. Test runner: `cargo test` in native/ (VITEST/cargo caps apply).
+
+## Specs
+
+- **S1** Optional log (Registro). User: "aparte del chat se registre tambien los logs, como vez cuando recojo items, anuncios, etc todo lo que trae el chat abajo no solo lo que escriben". The addon also sends non-player chat events (loot, money, currency, system, XP, reputation, skill, achievements, NPC/boss speech and emotes, player emotes). The app shows them in a new tab "Registro", untranslated (they already come in the client's language). Combat log is out of scope.
+- **S2** Everything new is opt-in. User: "Para que no se ensucie el proposito, pienso que esas opciones adicionales deban ser activables por la configuración." Settings get a switch for the log (default off) and a selector for item tooltips (default off). With both off, the app looks and behaves exactly as today.
+- **S3** Item tooltip on hover. User: "para los items incluso mostrar cuando haga hover en un panel pequeño, no se si wow de los datos o conectarlo con wowhead o algo". Hovering an item link in a message shows a small panel with the item's data.
+- **S4** Both tooltip sources, selectable. User: "pienso que puedes poner las 2 alternativas configurable". Selector values: Desactivado / WoW (addon) / Wowhead. "WoW (addon)" uses the game's own tooltip text sent by the addon; "Wowhead" fetches the item from Wowhead online.
+- **S5** Chat stays first. Log and tooltip frames go through a lower-priority queue in the addon, so player chat is never delayed by more than one frame hold. (Derived from the strip throughput: one payload per `hold` = 0.1 s.)
+- **S6** Compatibility. The app keeps decoding the current protocol (v1, links as `\2[Name]\3`); the new fields are additions. Existing tests stay green; existing behavior unchanged when the options are off.
+- **S7** No hover-original; right-click instead. User: "quitaríamos la característica de ver el lenguaje original cuando damos hover a un mensaje, ya que tenemos que acercar el mouse a los items, podríamos añadir acción al click derecho tal vez con opciones de copiar texto o ver mensaje original o simplemente cambiar el tab de traducido a original como ya tenemos". Hovering a message no longer shows the original line. The row context menu adds "Ver original" / "Ver traducción" (per message toggle) next to the existing Copiar mensaje / Copiar original / Copiar nombre; the global Traducido/Original toggle stays. README text, screenshot caption and dev `hover` state updated accordingly.
+
+## Tasks
+
+| ID | Specs | Work | Route | Status | Evidence |
+|---|---|---|---|---|---|
+| T1 | S1, S2, S5, S6 | Addon: log events on a low-priority queue, item id kept in links. App: decode log + item ids, "Registro" tab, log switch in Ajustes (default off), docs | delegated (context backstop) | pending | |
+| T2 | S3, S4 (WoW), S2, S5 | Addon: tooltip frames per item (once per session, low priority). App: tooltip cache, hover panel, selector "Datos de objetos" (default Desactivado) | delegated (context backstop) | pending | |
+| T1b | S7 | Remove hover-original, add per-message "Ver original"/"Ver traducción" to the context menu, update README + overlay screenshot | inline, after T1 (same file ui.rs) | pending | |
+| T3 | S3, S4 (Wowhead) | App: Wowhead source (verify endpoint, flavor/dataEnv mapping, locale), cache, errors, docs | delegated (context backstop) | pending | |
+
+## Log
+
+- **L1** (2026-11-07, user, verbatim): "Ahora quiero añadir una funcionaldiad, pero no se que tan factible sea, cómo tengo mi chat abajo configurado con elvui, y este chat, cómo que gasto doble parte de la pantalla y no me agrada, lo que yo quisiera es claro que siga pero yo pinear encima mi chat entonces ahorraria espacio, el problema y es donde quiero ver si puedes hacer una feature donde aparte del chat se registre tambien los logs, como vez cuando recojo items, anuncios, etc todo lo que trae el chat abajo no solo lo que escriben, será posible? y algo más, para los items incluso mostrar cuando haga hover en un panel pequeño, no se si wow de los datos o conectarlo con wowhead o algo"
+- **L2** (2026-11-07, user, verbatim): "Para que no se ensucie el proposito, pienso que esas opciones adicionales deban ser activables por la configuración.pienso que puedes poner las 2 alternativas configurable"
+- **L3** Design decisions (parent): the strip is one-way (game → app), so the addon always sends log/tooltip frames at low priority and the app shows or hides them per its settings. Strip budget: MAX_PAYLOAD = 540 bytes per frame, one frame per 0.1 s. Log lines are not translated. Route: writers are delegated per task because the parent session is past the long-session context backstop; tasks are sequential (shared addon file and protocol), not parallel.
+- **L4** (2026-11-07, user, verbatim): "Creo que para que funcione mejor quitaríamos la característica de ver el lenguaje original cuando damos hover a un mensaje, ya que tenemos que acercar el mouse a los items, podríamos añadir acción al click derecho tal vez con opciones de copiar texto o ver mensaje original o simplemente cambiar el tab de traducido a original como ya tenemos". Parent decision among the offered options: per-message toggle in the context menu plus the existing global toggle. Added S7 / T1b.

@@ -10,10 +10,10 @@
 use std::collections::{BTreeMap, HashMap};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::core::channels::channel_tab;
+use crate::core::channels::{channel_tab, is_log_channel};
 use crate::core::emoji::replace_shortcodes;
 use crate::core::language::looks_spanish;
-use crate::core::links::{only_links, protect_marked_links, restore_links, strip_link_markers};
+use crate::core::links::{marked_link_refs, only_links, protect_marked_links, restore_links, strip_link_markers, LinkRef};
 use crate::strip::Message;
 
 /// Pending entries kept for on-demand translation; the oldest are dropped first.
@@ -59,6 +59,8 @@ pub struct OverlayItem {
     pub provider: Option<String>,
     pub fallback_reason: Option<String>,
     pub error: Option<String>,
+    /// Type and id of the links that carry one (addon 0.3.0+), in order.
+    pub links: Vec<LinkRef>,
 }
 
 /// A change to an existing item. Which fields matter depends on `status`:
@@ -137,6 +139,12 @@ pub struct Pipeline {
     jobs: Vec<Job>,
 }
 
+/// Drops the non-player log lines (loot, system, NPC...) unless the log is on, so with
+/// the option off they are neither stored nor shown.
+pub fn filter_log_messages(messages: &[Message], show_log: bool) -> Vec<Message> {
+    messages.iter().filter(|m| show_log || !is_log_channel(&m.channel)).cloned().collect()
+}
+
 fn epoch_millis() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
@@ -189,8 +197,15 @@ impl Pipeline {
                 provider: None,
                 fallback_reason: None,
                 error: None,
+                links: marked_link_refs(&text),
             };
             self.next_id += 1;
+            // Log lines (loot, system, NPC...) already come in the client's language.
+            if is_log_channel(&msg.channel) {
+                item.status = Status::Done;
+                self.events.push(UiEvent::Add(item));
+                continue;
+            }
             if only_links(&masked) || looks_spanish(&masked) {
                 item.lang = Some("es".into());
                 item.status = Status::Done;
