@@ -953,9 +953,13 @@ const TIP_LINE: Color32 = Color32::from_rgb(0xdd, 0xdd, 0xdd);
 /// fallback, a small source note. Without data, the name and a message ("Cargando
 /// datos…" while the addon or Wowhead has not answered, "Sin datos de Wowhead").
 fn item_panel(ui: &Ui, link: &Response, name: &str, view: PanelView<'_>, fs: f32) {
-    let size = (fs * 0.92).max(11.0);
-    egui::Tooltip::always_open(ui.ctx().clone(), ui.layer_id(), link.id.with("item-panel"), link.rect).width(300.0).show(|ui| {
-        ui.spacing_mut().item_spacing.y = 2.0;
+    let size = fs.max(12.0);
+    // A fixed width like the game's tooltip: without a minimum egui shrinks the panel to
+    // its narrowest line and long lines wrap at almost every word.
+    let width = (fs * 22.0).clamp(260.0, 360.0);
+    egui::Tooltip::always_open(ui.ctx().clone(), ui.layer_id(), link.id.with("item-panel"), link.rect).width(width).show(|ui| {
+        ui.set_min_width(width);
+        ui.spacing_mut().item_spacing.y = 3.0;
         let (tip, note) = match view {
             PanelView::Tip { tip, note } => (tip, note),
             PanelView::Message(text) => {
