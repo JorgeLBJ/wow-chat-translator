@@ -9,7 +9,7 @@ use std::time::Instant;
 
 use eframe::egui;
 
-use crate::core::item_tips::{split_item_frames, ItemTooltipCache};
+use crate::core::item_tips::{split_tip_frames, ItemTooltipCache, TipKey};
 use crate::core::pipeline::{filter_log_messages, Job, Pipeline, Translation, Translator, UiEvent};
 use crate::core::prefs::{self, Config, ItemTooltips};
 use crate::core::wowhead::{self, WowheadCache};
@@ -177,14 +177,14 @@ impl Shared {
 
     pub fn add_messages(&self, messages: &[Message]) {
         let show_log = self.config().prefs.show_log;
-        // Tooltip frames (`*Item`) are never rows; they are kept whatever the settings
-        // say (the addon sends each item once per session), only shown when enabled.
-        let (messages, tips) = split_item_frames(messages);
+        // Tooltip frames (`*Item`, `*Quest`) are never rows; they are kept whatever the
+        // settings say (the addon sends each one once per session), only shown when enabled.
+        let (messages, tips) = split_tip_frames(messages);
         let messages = filter_log_messages(&messages, show_log);
         let jobs = {
             let mut model = self.model();
-            for (id, tip) in tips {
-                model.tips.insert(id, tip);
+            for (key, tip) in tips {
+                model.tips.insert(key, tip);
             }
             model.pipeline.add_messages(&messages);
             model.sync(&self.log);
@@ -252,26 +252,27 @@ impl Shared {
         self.repaint();
     }
 
-    /// Starts fetching an item from Wowhead on a background thread, unless it is
-    /// already known, loading, failed a moment ago, or too many requests are running.
-    pub fn request_wowhead(self: &Arc<Self>, id: u64) {
-        if !self.model().wowhead.begin(id, Instant::now()) {
+    /// Starts fetching an item or quest from Wowhead on a background thread, unless it
+    /// is already known, loading, failed a moment ago, or too many requests are running.
+    pub fn request_wowhead(self: &Arc<Self>, key: TipKey) {
+        if !self.model().wowhead.begin(key, Instant::now()) {
             return;
         }
         let shared = self.clone();
-        let spawned = std::thread::Builder::new().name(format!("wowhead-{id}")).spawn(move || {
+        let (kind, id) = (key.kind.as_str(), key.id);
+        let spawned = std::thread::Builder::new().name(format!("wowhead-{kind}-{id}")).spawn(move || {
             let flavor = super::addon_panel::played_flavor(&shared);
             let env = wowhead::data_env(flavor.as_ref().map(|f| f.folder.as_str()), flavor.as_ref().map_or("", |f| f.name.as_str()));
-            let result = wowhead::fetch(&UreqClient::new(), id, env);
+            let result = wowhead::fetch(&UreqClient::new(), key, env);
             match &result {
-                Ok(_) => shared.log.write(&format!("wowhead item {id} env={env} ok")),
-                Err(e) => shared.log.write(&format!("wowhead item {id} env={env} error {e}")),
+                Ok(_) => shared.log.write(&format!("wowhead {kind} {id} env={env} ok")),
+                Err(e) => shared.log.write(&format!("wowhead {kind} {id} env={env} error {e}")),
             }
-            shared.model().wowhead.finish(id, result, Instant::now());
+            shared.model().wowhead.finish(key, result, Instant::now());
             shared.repaint();
         });
         if let Err(e) = spawned {
-            self.model().wowhead.finish(id, Err(e.to_string()), Instant::now());
+            self.model().wowhead.finish(key, Err(e.to_string()), Instant::now());
         }
     }
 

@@ -13,7 +13,7 @@ use eframe::egui::{
 use egui_twemoji::EmojiLabel;
 
 use crate::core::channels::{log_highlights, log_label};
-use crate::core::item_tips::{link_segments, ItemTooltip, ItemTooltipCache, Segment, TipLine};
+use crate::core::item_tips::{tip_segments, ItemTooltip, ItemTooltipCache, Segment, TipKey, TipKind, TipLine};
 use crate::core::links::LinkRef;
 use crate::core::pipeline::{OverlayItem, Status, UiEvent};
 use crate::core::prefs::{Bounds, ItemTooltips};
@@ -23,7 +23,7 @@ use super::compose::{self, copied_message, failed_message, translate_outgoing, O
 use super::messages::{badge, can_translate, flip_label, panel_goes_above, row_mode, PANEL_GAP, shows_translation, BadgeKind, Mode, Row, Tab};
 use super::settings::{self, SettingsState};
 use super::shared::Shared;
-use super::style::{self, channel_label, class_color, item_quality_color, log_highlight_color, log_text_color, tab_color};
+use super::style::{self, channel_label, class_color, link_color, log_highlight_color, log_text_color, tab_color};
 use super::{widgets, win};
 
 const BOUNDS_SAVE_DELAY: Duration = Duration::from_millis(600);
@@ -58,8 +58,9 @@ pub struct OverlayApp {
     flipped: HashSet<u64>,
     /// `WCT_DEV_STATE=menu`: draws the row context menu on this message (screenshots).
     dev_menu: Option<u64>,
-    /// `WCT_DEV_STATE=itemtip`: draws the item panel of the sample item link open.
-    dev_itemtip: bool,
+    /// `WCT_DEV_STATE=itemtip` / `questtip`: draws the panel of the sample item or quest
+    /// link open.
+    dev_tip: Option<TipKey>,
     /// `WCT_DEV_STATE=select`: drags the mouse over the first message with synthetic
     /// input events to select its text (screenshots); the step of that drag.
     dev_select: Option<u32>,
@@ -102,7 +103,7 @@ impl OverlayApp {
             bounds_dirty_since: None,
             flipped: HashSet::new(),
             dev_menu: None,
-            dev_itemtip: false,
+            dev_tip: None,
             dev_select: None,
             first_row_rect: None,
             capture_hidden: None,
@@ -120,7 +121,8 @@ impl OverlayApp {
             match part.split_once('=') {
                 Some(("settings", pane)) => settings::dev_open(ctx, &self.shared, &self.settings, pane),
                 _ if part == "menu" => self.dev_menu = Some(900_001),
-                _ if part == "itemtip" => self.dev_itemtip = true,
+                _ if part == "itemtip" => self.dev_tip = Some(TipKey::item(DEV_ITEM_ID)),
+                _ if part == "questtip" => self.dev_tip = Some(TipKey::quest(DEV_QUEST_ID)),
                 _ if part == "select" => self.dev_select = Some(0),
                 _ if part == "addon" => super::addon_panel::dev_open(&self.shared),
                 _ if part == "sample" => {
@@ -134,6 +136,7 @@ impl OverlayApp {
                         ("General", Some("general"), "DRUID", "Folhaverde", "alguém sabe onde fica o treinador de herbalismo?", "¿alguien sabe dónde está el instructor de herboristería?", "pt"),
                         ("Raid", Some("group"), "SHAMAN", "Kazrak", "bloodlust on pull, everyone stack behind the boss", "ansia de sangre al empezar, todos juntos detrás del jefe", "en"),
                         ("Trade", Some("trade"), "HUNTER", "Arrowind", "WTS [Thunderfury, Blessed Blade of the Windseeker] 9999g, pst", "Vendo [Thunderfury, Blessed Blade of the Windseeker] 9999g, susúrrame", "en"),
+                        ("Party", Some("group"), "PALADIN", "Aldren", "anyone doing [Weapons of Choice]? need 1 more", "¿alguien hace [Weapons of Choice]? falta 1 más", "en"),
                     ];
                     for (i, (channel, tab, class, player, original, translated, lang)) in samples.into_iter().enumerate() {
                         let item = OverlayItem {
@@ -150,14 +153,20 @@ impl OverlayApp {
                             provider: Some("google".into()),
                             fallback_reason: None,
                             error: None,
-                            links: if i == 7 { vec![dev_item_link()] } else { Vec::new() },
+                            links: match i {
+                                7 => vec![dev_item_link()],
+                                8 => vec![dev_quest_link()],
+                                _ => Vec::new(),
+                            },
                         };
                         model.list.apply(UiEvent::Add(item), &|_| "15:38".into());
                     }
-                    // Its tooltip, as the addon would have sent it.
-                    model.tips.insert(DEV_ITEM_ID, dev_item_tooltip());
+                    // Their tooltips, as the addon would have sent them.
+                    model.tips.insert(TipKey::item(DEV_ITEM_ID), dev_item_tooltip());
+                    model.tips.insert(TipKey::quest(DEV_QUEST_ID), dev_quest_tooltip());
                     // And as Wowhead would answer, so screenshots never go online.
-                    model.wowhead.insert_ready(DEV_ITEM_ID, dev_item_tooltip());
+                    model.wowhead.insert_ready(TipKey::item(DEV_ITEM_ID), dev_item_tooltip());
+                    model.wowhead.insert_ready(TipKey::quest(DEV_QUEST_ID), dev_quest_tooltip());
                     // With the log option on, a few Registro lines too.
                     if self.shared.config().prefs.show_log {
                         let log = [
@@ -374,7 +383,7 @@ impl OverlayApp {
                 for row in model.list.visible() {
                     any = true;
                     let mode = row_mode(self.mode, self.flipped.contains(&row.item.id));
-                    let force_tip = self.dev_itemtip && row.item.links.iter().any(|l| l.id == DEV_ITEM_ID);
+                    let force_tip = self.dev_tip.filter(|k| row.item.links.iter().any(|l| TipKey::of_link(l) == Some(*k)));
                     let resp = message_row(ui, row, mode, font_size, self.dev_menu == Some(row.item.id), tips, force_tip);
                     if self.first_row_rect.is_none() || row_index == 0 {
                         self.first_row_rect = Some(resp.rect);
@@ -438,9 +447,9 @@ impl OverlayApp {
                 }
             });
         }
-        // A hovered item without Wowhead data yet (the model lock is released by now).
-        if let Some(id) = wanted.get() {
-            self.shared.request_wowhead(id);
+        // A hovered item or quest without Wowhead data yet (the model lock is released by now).
+        if let Some(key) = wanted.get() {
+            self.shared.request_wowhead(key);
         }
         if let Some(id) = flip {
             if !self.flipped.remove(&id) {
@@ -792,7 +801,8 @@ fn tab_button(ui: &mut Ui, label: &str, on: bool, count: Option<u32>) -> Respons
 /// One chat line: time, channel tag, player, badge, text (with colored emoji).
 /// One message. `highlight` draws it as hovered (screenshots of its context menu).
 /// `tips` is set when item data is on ("Datos de objetos"): item links are then drawn in
-/// their quality color and show their panel on hover (`force_tip`: open, for screenshots).
+/// their quality color, quest links in quest gold, and both show their panel on hover
+/// (`force_tip`: that link's panel open, for screenshots).
 fn message_row(
     ui: &mut Ui,
     row: &Row,
@@ -800,7 +810,7 @@ fn message_row(
     fs: f32,
     highlight: bool,
     tips: Option<TipSources<'_>>,
-    force_tip: bool,
+    force_tip: Option<TipKey>,
 ) -> Response {
     let item = &row.item;
     let show_t = shows_translation(item, mode);
@@ -851,7 +861,7 @@ fn message_row(
                     let base = log_text_color(&item.channel).unwrap_or(style::TEXT);
                     let color = if item.status == Status::Pending { base.gamma_multiply(0.55) } else { base };
                     let lead = if log.is_some() && item.player.is_empty() { "" } else { ": " };
-                    match tips.and_then(|tips| item_segments(text, &item.links).map(|segs| (tips, segs))) {
+                    match tips.and_then(|tips| tip_segments(text, &item.links).map(|segs| (tips, segs))) {
                         Some((tips, segs)) => {
                             let mut force = force_tip;
                             if !lead.is_empty() {
@@ -863,16 +873,19 @@ fn message_row(
                                         EmojiLabel::new(RichText::new(t).color(color)).show(ui);
                                     }
                                     Segment::Link(name, link) => {
-                                        let view = tips.view(link.id);
-                                        let c = item_quality_color(view.and_then(|v| v.tip()).and_then(|t| t.quality));
+                                        // tip_segments keeps only item and quest links.
+                                        let Some(key) = TipKey::of_link(&link) else { continue };
+                                        let view = tips.view(key);
+                                        let c = link_color(key.kind, view.and_then(|v| v.tip()).and_then(|t| t.quality));
                                         let resp = ui.add(egui::Label::new(RichText::new(&name).color(c)));
                                         // The row's own click area covers the text, so
                                         // hover is read from the pointer position.
-                                        if std::mem::take(&mut force) || ui.ctx().pointer_hover_pos().is_some_and(|p| resp.rect.contains(p)) {
+                                        let forced = force == Some(key) && force.take().is_some();
+                                        if forced || ui.ctx().pointer_hover_pos().is_some_and(|p| resp.rect.contains(p)) {
                                             link_hovered.set(true);
-                                            tips.hovered(ui, link.id);
+                                            tips.hovered(ui, key);
                                             if let Some(view) = view {
-                                                item_panel(ui, &resp, &name, view, fs);
+                                                item_panel(ui, &resp, &name, key.kind, view, fs);
                                             }
                                         }
                                     }
@@ -933,51 +946,42 @@ struct TipSources<'a> {
     mode: ItemTooltips,
     addon: &'a ItemTooltipCache,
     wowhead: &'a WowheadCache,
-    /// The hovered item to fetch from Wowhead after the frame's model lock is released.
-    wanted: &'a Cell<Option<u64>>,
+    /// The hovered item or quest to fetch from Wowhead after the frame's model lock is
+    /// released.
+    wanted: &'a Cell<Option<TipKey>>,
 }
 
 impl<'a> TipSources<'a> {
-    fn view(&self, id: u64) -> Option<PanelView<'a>> {
-        panel_view(self.mode, self.addon.get(id), self.wowhead.get(id))
+    fn view(&self, key: TipKey) -> Option<PanelView<'a>> {
+        panel_view(self.mode, self.addon.get(key), self.wowhead.get(key))
     }
 
     /// Marks a hovered item for fetching when Wowhead is the source and has no answer
     /// yet; the answer repaints, and so does a short timer in case the request could not
     /// start this frame (too many at once).
-    fn hovered(&self, ui: &Ui, id: u64) {
+    fn hovered(&self, ui: &Ui, key: TipKey) {
         if self.mode != ItemTooltips::Wowhead {
             return;
         }
-        match self.wowhead.get(id) {
+        match self.wowhead.get(key) {
             None => {
-                self.wanted.set(Some(id));
+                self.wanted.set(Some(key));
                 ui.ctx().request_repaint_after(Duration::from_millis(300));
             }
-            Some(WowheadState::Failed { .. }) => self.wanted.set(Some(id)),
+            Some(WowheadState::Failed { .. }) => self.wanted.set(Some(key)),
             Some(WowheadState::Loading | WowheadState::Ready(_)) => {}
         }
     }
 }
 
-/// The text split at its item links, or `None` when it has no item link to draw apart
-/// (the row is then drawn exactly as without item data).
-fn item_segments(text: &str, links: &[LinkRef]) -> Option<Vec<Segment>> {
-    let items: Vec<LinkRef> = links.iter().filter(|l| l.kind == "item").cloned().collect();
-    if items.is_empty() {
-        return None;
-    }
-    let segs = link_segments(text, &items);
-    segs.iter().any(|s| matches!(s, Segment::Link(..))).then_some(segs)
-}
-
 const TIP_LINE: Color32 = Color32::from_rgb(0xdd, 0xdd, 0xdd);
 
-/// The small item panel under a hovered item link: the name in its quality color, then
+/// The small panel of a hovered item or quest link: the name in its quality color (quests
+/// in quest gold, border too), then
 /// the tooltip lines (right column right-aligned) and, for Wowhead or its addon
 /// fallback, a small source note. Without data, the name and a message ("Cargando
 /// datos…" while the addon or Wowhead has not answered, "Sin datos de Wowhead").
-fn item_panel(ui: &Ui, link: &Response, name: &str, view: PanelView<'_>, fs: f32) {
+fn item_panel(ui: &Ui, link: &Response, name: &str, kind: TipKind, view: PanelView<'_>, fs: f32) {
     let size = fs.max(12.0);
     // A fixed width like the game's tooltip: without a minimum egui shrinks the panel to
     // its narrowest line and long lines wrap at almost every word.
@@ -993,9 +997,9 @@ fn item_panel(ui: &Ui, link: &Response, name: &str, view: PanelView<'_>, fs: f32
     } else {
         (Align2::LEFT_TOP, link.rect.left_bottom() + vec2(0.0, PANEL_GAP))
     };
-    // The border takes the item's quality color, like the game.
+    // The border takes the item's quality color, like the game; quests are gold.
     let border = match &view {
-        PanelView::Tip { tip, .. } => item_quality_color(tip.quality),
+        PanelView::Tip { tip, .. } => link_color(kind, tip.quality),
         PanelView::Message(_) => style::LINK_GOLD,
     };
     egui::Area::new(id).order(Order::Tooltip).pivot(pivot).fixed_pos(pos).constrain(true).interactable(false).show(ctx, |ui| {
@@ -1012,7 +1016,7 @@ fn item_panel(ui: &Ui, link: &Response, name: &str, view: PanelView<'_>, fs: f32
         };
         for (i, TipLine { left, right }) in tip.lines.iter().enumerate() {
             let (text, color) = if i == 0 {
-                (RichText::new(left).family(widgets::semibold_family()).size(size * 1.05), item_quality_color(tip.quality))
+                (RichText::new(left).family(widgets::semibold_family()).size(size * 1.05), link_color(kind, tip.quality))
             } else {
                 (RichText::new(left).size(size), TIP_LINE)
             };
@@ -1051,4 +1055,17 @@ fn dev_item_tooltip() -> ItemTooltip {
         +9 Nature Resistance\nChance on hit: Blasts your enemy with lightning, dealing 300 Nature damage and then \
         jumping to additional nearby enemies.\nRequires Level 60";
     crate::core::item_tips::parse_item_tooltip("19019", text).map(|(_, t)| t).expect("valid sample")
+}
+
+/// Sample quest of the `sample` dev state (screenshots); the id is only a sample key.
+const DEV_QUEST_ID: u64 = 26_999;
+
+fn dev_quest_link() -> LinkRef {
+    LinkRef { name: "[Weapons of Choice]".into(), kind: "quest".into(), id: DEV_QUEST_ID }
+}
+
+fn dev_quest_tooltip() -> ItemTooltip {
+    let text = "Weapons of Choice\nSpeak with the weaponsmith and choose your new weapon.\n \nRequirements:\n\
+        - Talk to the weaponsmith\n- Pick one weapon: 0/1";
+    crate::core::item_tips::parse_quest_tooltip("26999", text).map(|(_, t)| t).expect("valid sample")
 }

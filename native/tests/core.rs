@@ -646,8 +646,9 @@ fn show_log_defaults_off_and_persists() {
 // ---------------------------------------------------------------- item tooltips (addon source)
 
 use wow_chat_translator::core::item_tips::{
-    is_item_channel, link_segments, parse_item_tooltip, split_item_frames, ItemTooltip, ItemTooltipCache, Segment, TipLine,
-    ITEM_CHANNEL, TOOLTIP_CACHE_CAP,
+    is_item_channel, is_quest_channel, link_segments, parse_item_tooltip, parse_quest_tooltip, split_tip_frames,
+    tip_segments, ItemTooltip, ItemTooltipCache, Segment, TipKey, TipKind, TipLine, ITEM_CHANNEL, QUEST_CHANNEL,
+    TOOLTIP_CACHE_CAP,
 };
 use wow_chat_translator::core::prefs::ItemTooltips;
 
@@ -707,10 +708,10 @@ fn item_frames_are_never_chat_rows_and_fill_the_tooltips() {
         log_msg("*Loot", "You receive loot: x"),
         item_frame("bad", "garbled"),
     ];
-    let (rest, tips) = split_item_frames(&all);
+    let (rest, tips) = split_tip_frames(&all);
     assert_eq!(rest, vec![all[0].clone(), all[2].clone()], "item frames (valid or not) never reach the pipeline");
     assert_eq!(tips.len(), 1);
-    assert_eq!(tips[0].0, 2770);
+    assert_eq!(tips[0].0, TipKey::item(2770));
     assert_eq!(tips[0].1.name(), Some("Copper Ore"));
     // Whatever the log option is, an *Item frame is not a log nor a chat line.
     assert!(is_item_channel("*Item"));
@@ -725,7 +726,7 @@ fn item_frames_are_never_chat_rows_and_fill_the_tooltips() {
 #[test]
 fn messages_without_item_frames_pass_through_unchanged() {
     let all = vec![msg("Trade", "wts ore"), log_msg("*System", "AFK"), msg("Say", "hi")];
-    let (rest, tips) = split_item_frames(&all);
+    let (rest, tips) = split_tip_frames(&all);
     assert_eq!(rest, all);
     assert!(tips.is_empty());
 }
@@ -748,6 +749,118 @@ fn tooltip_cache_is_bounded_and_drops_the_oldest() {
     cache.insert(99_999, tip("y"));
     assert!(cache.get(10).is_some(), "refreshed id survives the next eviction");
     assert!(cache.get(11).is_none());
+}
+
+// ---------------------------------------------------------------- quest tooltips (addon source)
+
+fn quest_frame(id: &str, text: &str) -> Message {
+    Message { channel: QUEST_CHANNEL.into(), class: None, player: id.into(), text: text.into() }
+}
+
+#[test]
+fn quest_tooltip_payload_parses_title_and_lines_without_quality() {
+    assert_eq!(QUEST_CHANNEL, "*Quest");
+    let text = "Weapons of Choice\nSpeak with the quartermaster.\n \nRequirements:\nLevel 20\tElite";
+    let (id, tip) = parse_quest_tooltip("12345", text).expect("valid");
+    assert_eq!(id, 12345);
+    assert_eq!(tip.quality, None);
+    assert_eq!(
+        tip.lines,
+        vec![
+            tip_line("Weapons of Choice", None),
+            tip_line("Speak with the quartermaster.", None),
+            tip_line("Requirements:", None),
+            tip_line("Level 20", Some("Elite")),
+        ]
+    );
+    // A quest has no quality line: a title "q3" is the title.
+    let (_, tip) = parse_quest_tooltip("1", "q3\nx").unwrap();
+    assert_eq!((tip.quality, tip.name()), (None, Some("q3")));
+    assert_eq!(parse_quest_tooltip("", "Title"), None, "no id");
+    assert_eq!(parse_quest_tooltip("7x", "Title"), None, "id is not a number");
+    assert_eq!(parse_quest_tooltip("7", " \n"), None, "no title");
+}
+
+#[test]
+fn quest_frames_are_never_rows_whatever_the_log_option() {
+    let all = vec![
+        msg("Party", "quien hace la quest?"),
+        quest_frame("783", "A Threat Within\nSpeak with Marshal McBride."),
+        item_frame("2770", "q1\nCopper Ore"),
+        quest_frame("bad", "garbled"),
+    ];
+    let (rest, tips) = split_tip_frames(&all);
+    assert_eq!(rest, vec![all[0].clone()], "quest frames (valid or not) never reach the pipeline");
+    assert_eq!(tips.len(), 2);
+    assert_eq!(tips[0].0, TipKey::quest(783));
+    assert_eq!(tips[0].1.name(), Some("A Threat Within"));
+    assert_eq!(tips[1].0, TipKey::item(2770));
+    assert!(is_quest_channel("*Quest"));
+    assert!(!is_quest_channel("Quest"), "a player channel named Quest stays chat");
+    assert!(!is_item_channel("*Quest"));
+    assert!(!is_log_channel("*Quest"));
+    for show_log in [false, true] {
+        let shown = filter_log_messages(&rest, show_log);
+        assert!(shown.iter().all(|m| !is_quest_channel(&m.channel)));
+    }
+}
+
+#[test]
+fn item_and_quest_with_the_same_id_never_collide() {
+    let mut cache = ItemTooltipCache::default();
+    let tip = |name: &str| ItemTooltip { quality: None, lines: vec![tip_line(name, None)] };
+    cache.insert(TipKey::item(123), tip("Item 123"));
+    cache.insert(TipKey::quest(123), tip("Quest 123"));
+    assert_eq!(cache.len(), 2);
+    assert_eq!(cache.get(TipKey::item(123)).unwrap().name(), Some("Item 123"));
+    assert_eq!(cache.get(TipKey::quest(123)).unwrap().name(), Some("Quest 123"));
+    // A bare id is an item, as before quests existed.
+    assert_eq!(cache.get(123).unwrap().name(), Some("Item 123"));
+    assert_eq!(TipKey::from(123), TipKey { kind: TipKind::Item, id: 123 });
+}
+
+#[test]
+fn tip_keys_come_from_item_and_quest_links_only() {
+    assert_eq!(TipKey::of_link(&item_ref("[Ore]", 2770)), Some(TipKey::item(2770)));
+    assert_eq!(TipKey::of_link(&quest_ref("[A Threat Within]", 783)), Some(TipKey::quest(783)));
+    for kind in ["spell", "achievement", "player", "Item", "quests"] {
+        let link = LinkRef { name: "[x]".into(), kind: kind.into(), id: 1 };
+        assert_eq!(TipKey::of_link(&link), None, "{kind}");
+    }
+    assert_eq!(TipKind::Item.as_str(), "item");
+    assert_eq!(TipKind::Quest.as_str(), "quest");
+}
+
+#[test]
+fn tip_segments_split_at_item_and_quest_links_only() {
+    let ore = item_ref("[Copper Ore]", 2770);
+    let quest = quest_ref("[A Threat Within]", 783);
+    let spell = LinkRef { name: "[Fireball]".into(), kind: "spell".into(), id: 133 };
+    let segs = tip_segments("[Fireball] y [A Threat Within] por [Copper Ore]", &[spell.clone(), quest.clone(), ore.clone()]);
+    assert_eq!(
+        segs,
+        Some(vec![
+            Segment::Text("[Fireball] y ".into()),
+            Segment::Link("[A Threat Within]".into(), quest.clone()),
+            Segment::Text(" por ".into()),
+            Segment::Link("[Copper Ore]".into(), ore.clone()),
+        ]),
+        "spell links stay plain text"
+    );
+    assert_eq!(
+        tip_segments("hago [A Threat Within]", std::slice::from_ref(&quest)),
+        Some(vec![Segment::Text("hago ".into()), Segment::Link("[A Threat Within]".into(), quest)])
+    );
+    assert_eq!(tip_segments("[Fireball]", std::slice::from_ref(&spell)), None, "only other kinds: drawn as before");
+    assert_eq!(tip_segments("sin enlaces", &[]), None);
+}
+
+#[test]
+fn tip_segments_keep_the_previous_item_link_behavior() {
+    let bar = item_ref("[Arcanite Bar]", 12360);
+    let text = "vendo [Arcanite Bar] barato";
+    assert_eq!(tip_segments(text, std::slice::from_ref(&bar)), Some(link_segments(text, std::slice::from_ref(&bar))));
+    assert_eq!(tip_segments("vendo barato", std::slice::from_ref(&bar)), None, "link name not in the text: plain row");
 }
 
 #[test]
@@ -790,6 +903,10 @@ fn item_tooltips_pref_keeps_the_wowhead_source() {
 
 fn item_ref(name: &str, id: u64) -> LinkRef {
     LinkRef { name: name.into(), kind: "item".into(), id }
+}
+
+fn quest_ref(name: &str, id: u64) -> LinkRef {
+    LinkRef { name: name.into(), kind: "quest".into(), id }
 }
 
 #[test]

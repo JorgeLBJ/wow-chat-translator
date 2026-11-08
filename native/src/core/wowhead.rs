@@ -6,7 +6,10 @@
 //! -> {"name": "...", "quality": 5, "icon": "inv_sword_39", "tooltip": "<table>...</table>", ...}
 //! ```
 //!
-//! Only the item id (and the game version / language) is sent. Results, failures
+//! Quests use the same endpoint with `tooltip/quest/<id>`; the answer then carries only
+//! `name` and `tooltip` (no quality).
+//!
+//! Only the item or quest id (and the game version / language) is sent. Results, failures
 //! included, are kept in a [`WowheadCache`] so an item is asked for once, and a failing
 //! one is retried only after [`RETRY_AFTER`].
 
@@ -15,7 +18,7 @@ use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 
-use crate::core::item_tips::{ItemTooltip, TipLine, TOOLTIP_CACHE_CAP};
+use crate::core::item_tips::{ItemTooltip, TipKey, TipLine, TOOLTIP_CACHE_CAP};
 use crate::core::prefs::ItemTooltips;
 use crate::translators::http::HttpClient;
 
@@ -80,9 +83,10 @@ pub fn data_env(folder: Option<&str>, name: &str) -> u8 {
     }
 }
 
-/// The tooltip endpoint for an item.
-pub fn tooltip_url(id: u64, data_env: u8, locale: u8) -> String {
-    format!("https://nether.wowhead.com/tooltip/item/{id}?dataEnv={data_env}&locale={locale}")
+/// The tooltip endpoint for an item or a quest (a bare id is an item).
+pub fn tooltip_url(key: impl Into<TipKey>, data_env: u8, locale: u8) -> String {
+    let TipKey { kind, id } = key.into();
+    format!("https://nether.wowhead.com/tooltip/{}/{id}?dataEnv={data_env}&locale={locale}", kind.as_str())
 }
 
 /// Sent as `User-Agent`: the app and its version, nothing about the user.
@@ -114,10 +118,10 @@ pub fn parse_answer(body: &str) -> Result<ItemTooltip, String> {
     Ok(ItemTooltip { quality: a.quality.filter(|q| *q <= 8), lines })
 }
 
-/// Asks Wowhead for one item (blocking: run it off the UI thread).
-pub fn fetch(client: &dyn HttpClient, id: u64, data_env: u8) -> Result<ItemTooltip, String> {
+/// Asks Wowhead for one item or quest (blocking: run it off the UI thread).
+pub fn fetch(client: &dyn HttpClient, key: impl Into<TipKey>, data_env: u8) -> Result<ItemTooltip, String> {
     let headers = [("User-Agent".to_string(), user_agent()), ("Accept".to_string(), "application/json".to_string())];
-    let res = client.get(&tooltip_url(id, data_env, LOCALE_ES), &headers, TIMEOUT)?;
+    let res = client.get(&tooltip_url(key, data_env, LOCALE_ES), &headers, TIMEOUT)?;
     if !res.ok() {
         return Err(format!("HTTP {}", res.status));
     }
@@ -249,16 +253,17 @@ pub enum WowheadState {
     Failed { at: Instant, error: String },
 }
 
-/// Wowhead results by item id (failures too), at most [`TOOLTIP_CACHE_CAP`] items.
+/// Wowhead results by [`TipKey`] (failures too), at most [`TOOLTIP_CACHE_CAP`] entries.
+/// A bare `u64` key is an item.
 #[derive(Debug, Default)]
 pub struct WowheadCache {
-    map: HashMap<u64, WowheadState>,
-    order: VecDeque<u64>,
+    map: HashMap<TipKey, WowheadState>,
+    order: VecDeque<TipKey>,
 }
 
 impl WowheadCache {
-    pub fn get(&self, id: u64) -> Option<&WowheadState> {
-        self.map.get(&id)
+    pub fn get(&self, key: impl Into<TipKey>) -> Option<&WowheadState> {
+        self.map.get(&key.into())
     }
 
     fn in_flight(&self) -> usize {
@@ -268,7 +273,8 @@ impl WowheadCache {
     /// True when a request for `id` should start now, and marks it loading: never while
     /// one is running or after a success, after a failure only once [`RETRY_AFTER`] has
     /// passed, and never beyond [`MAX_IN_FLIGHT`] requests at once.
-    pub fn begin(&mut self, id: u64, now: Instant) -> bool {
+    pub fn begin(&mut self, key: impl Into<TipKey>, now: Instant) -> bool {
+        let id = key.into();
         match self.map.get(&id) {
             Some(WowheadState::Loading | WowheadState::Ready(_)) => return false,
             Some(WowheadState::Failed { at, .. }) if now.saturating_duration_since(*at) < RETRY_AFTER => return false,
@@ -282,20 +288,20 @@ impl WowheadCache {
     }
 
     /// Stores a request's outcome.
-    pub fn finish(&mut self, id: u64, result: Result<ItemTooltip, String>, now: Instant) {
+    pub fn finish(&mut self, key: impl Into<TipKey>, result: Result<ItemTooltip, String>, now: Instant) {
         let state = match result {
             Ok(tip) => WowheadState::Ready(tip),
             Err(error) => WowheadState::Failed { at: now, error },
         };
-        self.put(id, state);
+        self.put(key.into(), state);
     }
 
     /// Stores a known tooltip (sample data for screenshots).
-    pub fn insert_ready(&mut self, id: u64, tip: ItemTooltip) {
-        self.put(id, WowheadState::Ready(tip));
+    pub fn insert_ready(&mut self, key: impl Into<TipKey>, tip: ItemTooltip) {
+        self.put(key.into(), WowheadState::Ready(tip));
     }
 
-    fn put(&mut self, id: u64, state: WowheadState) {
+    fn put(&mut self, id: TipKey, state: WowheadState) {
         if self.map.insert(id, state).is_some() {
             self.order.retain(|&k| k != id);
         }

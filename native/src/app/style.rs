@@ -3,6 +3,7 @@
 
 use eframe::egui::Color32;
 
+use crate::core::item_tips::TipKind;
 use crate::core::prefs::TranslatorSettings;
 use crate::translators::provider_label;
 
@@ -41,6 +42,14 @@ pub fn item_quality_color(quality: Option<u8>) -> Color32 {
         Some(6) => hex(0xe6cc80),
         Some(7 | 8) => hex(0x00ccff),
         _ => LINK_GOLD,
+    }
+}
+
+/// A hover-panel link's color: items in their quality color, quests in link gold.
+pub fn link_color(kind: TipKind, quality: Option<u8>) -> Color32 {
+    match kind {
+        TipKind::Item => item_quality_color(quality),
+        TipKind::Quest => LINK_GOLD,
     }
 }
 

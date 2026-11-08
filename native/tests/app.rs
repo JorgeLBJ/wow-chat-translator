@@ -5,7 +5,8 @@ use wow_chat_translator::app::debug_log::{iso_utc, DebugLog};
 use wow_chat_translator::app::game_watcher::{GameChange, GameWatcher};
 use wow_chat_translator::app::messages::{badge, can_translate, flip_label, panel_goes_above, row_mode, shows_translation, BadgeKind, MessageList, Mode, Tab, MAX_ITEMS};
 use wow_chat_translator::app::presence::PresenceGate;
-use wow_chat_translator::app::style::{channel_label, class_color, hhmm, item_quality_color, log_highlight_color, log_text_color, tab_color, translator_label, ReaderState, LINK_GOLD};
+use wow_chat_translator::app::style::{channel_label, class_color, hhmm, item_quality_color, link_color, log_highlight_color, log_text_color, tab_color, translator_label, ReaderState, LINK_GOLD};
+use wow_chat_translator::core::item_tips::TipKind;
 use wow_chat_translator::core::pipeline::{ItemPatch, OverlayItem, Status, UiEvent};
 use wow_chat_translator::core::prefs::TranslatorSettings;
 
@@ -783,6 +784,12 @@ fn item_links_use_the_wow_quality_colors() {
     assert_eq!(item_quality_color(Some(4)).to_hex(), "#a335eeff");
     assert_eq!(item_quality_color(Some(5)).to_hex(), "#ff8000ff");
     assert_eq!(item_quality_color(None), LINK_GOLD, "unknown quality: link gold");
+    // Item links keep their quality color; quest links are quest yellow whatever the data.
+    for q in [None, Some(0), Some(2), Some(4), Some(5), Some(9)] {
+        assert_eq!(link_color(TipKind::Item, q), item_quality_color(q));
+        assert_eq!(link_color(TipKind::Quest, q), LINK_GOLD);
+    }
+    assert_eq!(LINK_GOLD.to_hex(), "#ffd100ff");
     assert_eq!(LINK_GOLD.to_hex(), "#ffd100ff");
     // Existing colors unchanged.
     assert_eq!(class_color(Some("MAGE")).to_hex(), "#3fc7ebff");

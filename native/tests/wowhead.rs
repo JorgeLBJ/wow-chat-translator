@@ -4,7 +4,7 @@
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use wow_chat_translator::core::item_tips::{ItemTooltip, TipLine, TOOLTIP_CACHE_CAP};
+use wow_chat_translator::core::item_tips::{ItemTooltip, ItemTooltipCache, TipKey, TipLine, TOOLTIP_CACHE_CAP};
 use wow_chat_translator::core::prefs::ItemTooltips;
 use wow_chat_translator::core::wowhead::{
     data_env, decode_entities, env, fetch, html_to_lines, panel_view, parse_answer, tooltip_url, user_agent, PanelView,
@@ -48,6 +48,7 @@ fn data_env_follows_the_played_flavor() {
 #[test]
 fn tooltip_url_carries_only_id_env_and_locale() {
     assert_eq!(tooltip_url(19019, 4, 6), "https://nether.wowhead.com/tooltip/item/19019?dataEnv=4&locale=6");
+    assert_eq!(tooltip_url(TipKey::item(19019), 4, 6), tooltip_url(19019, 4, 6), "a bare id is an item");
     assert!(user_agent().starts_with("WoWChatTranslator/"), "{}", user_agent());
     assert_eq!(user_agent(), format!("WoWChatTranslator/{}", env!("CARGO_PKG_VERSION")));
 }
@@ -220,4 +221,47 @@ fn wowhead_mode_shows_web_data_loading_or_the_addon_fallback() {
     );
     assert_eq!(panel_view(ItemTooltips::Wowhead, None, Some(&failed)), Some(PanelView::Message(NO_WOWHEAD_TEXT)));
     assert_eq!(NO_WOWHEAD_TEXT, "Sin datos de Wowhead");
+}
+
+// ---------------------------------------------------------------- quests
+
+#[test]
+fn quest_tooltip_url_uses_the_quest_path() {
+    assert_eq!(tooltip_url(TipKey::quest(783), 1, 6), "https://nether.wowhead.com/tooltip/quest/783?dataEnv=1&locale=6");
+}
+
+#[test]
+fn quest_fetch_asks_the_quest_endpoint_and_reads_name_and_lines() {
+    // Shape of the real answer (quest 783, HTTP 200): only "name" and "tooltip", no quality.
+    let body = r#"{"name":"Una amenaza interna","tooltip":"<table><tr><td><b class=\"q\">Una amenaza interna</b></td></tr></table><br>Habla con el alguacil McBride."}"#;
+    let fake = Fake::new(Ok(HttpResponse { status: 200, body: body.into() }));
+    let tip = fetch(&fake, TipKey::quest(783), 1).expect("ok");
+    assert_eq!(fake.calls.lock().unwrap()[0].0, "https://nether.wowhead.com/tooltip/quest/783?dataEnv=1&locale=6");
+    assert_eq!(tip.quality, None);
+    assert_eq!(tip.lines, vec![line("Una amenaza interna", None), line("Habla con el alguacil McBride.", None)]);
+}
+
+#[test]
+fn wowhead_cache_keeps_item_and_quest_apart() {
+    let now = Instant::now();
+    let mut cache = WowheadCache::default();
+    assert!(cache.begin(TipKey::item(9), now));
+    assert!(cache.begin(TipKey::quest(9), now), "same id, other kind: its own request");
+    cache.finish(TipKey::quest(9), Ok(tip("Quest")), now);
+    assert_eq!(cache.get(TipKey::quest(9)), Some(&WowheadState::Ready(tip("Quest"))));
+    assert_eq!(cache.get(TipKey::item(9)), Some(&WowheadState::Loading));
+    assert_eq!(cache.get(9), Some(&WowheadState::Loading), "a bare id is the item");
+}
+
+#[test]
+fn quest_panel_view_follows_the_same_source_rules() {
+    let mut addon = ItemTooltipCache::default();
+    let quest = ItemTooltip { quality: None, lines: vec![line("A Threat Within", None), line("Speak with Marshal McBride.", None)] };
+    addon.insert(TipKey::quest(783), quest.clone());
+    let wh = WowheadCache::default();
+    let key = TipKey::quest(783);
+    assert_eq!(panel_view(ItemTooltips::Addon, addon.get(key), wh.get(key)), Some(PanelView::Tip { tip: &quest, note: None }));
+    assert_eq!(panel_view(ItemTooltips::Addon, addon.get(783), wh.get(783)), Some(PanelView::Message(LOADING_TEXT)), "item 783 is not the quest");
+    assert_eq!(panel_view(ItemTooltips::Wowhead, addon.get(key), wh.get(key)), Some(PanelView::Message(LOADING_TEXT)));
+    assert_eq!(panel_view(ItemTooltips::Off, addon.get(key), wh.get(key)), None);
 }

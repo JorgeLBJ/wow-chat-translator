@@ -261,12 +261,16 @@ end
 -- joined with "\n"; a right column follows its line after "\t". The first line is the
 -- item name. The tooltip is read from a hidden GameTooltip with the full link of the
 -- message (bonus ids kept). Items not cached yet are retried a few times.
+-- Quest links get the same treatment on channel "*Quest": player = the quest id, text =
+-- the quest tooltip lines (title first, no quality line), scanned from the full quest
+-- link, once per quest id per session, same queue, caps and retries.
 local ITEM_CHANNEL = "*Item"
+local QUEST_CHANNEL = "*Quest"
 local MAX_TIP_QUEUE = 50
 local MAX_TIP_TRIES = 5
 local TIP_RETRY = 1 -- seconds between tries of an item not cached yet
-local tipPending = {} -- { link, id, tries, at }, oldest first
-local tipSeen = {} -- item id -> true once queued this session
+local tipPending = {} -- { kind, link, id, key, tries, at }, oldest first
+local tipSeen = {} -- "item:<id>" / "quest:<id>" -> true once queued this session
 local getItemInfo = (C_Item and C_Item.GetItemInfo) or GetItemInfo
 local scanner
 
@@ -283,13 +287,14 @@ local function tipText(s)
 end
 
 local function noteItems(message)
-  for link, digits in message:gmatch("|H(item:(%d+)[^|]*)|h") do
+  for link, kind, digits in message:gmatch("|H((%a+):(%d+)[^|]*)|h") do
     local id = tonumber(digits)
-    if id and not tipSeen[id] then
-      tipSeen[id] = true
-      tipPending[#tipPending + 1] = { link = link, id = id, tries = 0, at = 0 }
+    local key = id and kind .. ":" .. id
+    if (kind == "item" or kind == "quest") and key and not tipSeen[key] then
+      tipSeen[key] = true
+      tipPending[#tipPending + 1] = { kind = kind, link = link, id = id, key = key, tries = 0, at = 0 }
       if #tipPending > MAX_TIP_QUEUE then
-        tipSeen[table.remove(tipPending, 1).id] = nil -- may be queued again later
+        tipSeen[table.remove(tipPending, 1).key] = nil -- may be queued again later
       end
     end
   end
@@ -331,7 +336,23 @@ local function scanTooltip(link)
   return table.concat(lines, "\n")
 end
 
+-- A quest's tooltip; a title alone means the game has not loaded the quest yet, so it
+-- is retried and only sent as it is on the last try.
+local function questPayload(t)
+  if t.tries == 0 and C_QuestLog and C_QuestLog.RequestLoadQuestByID then
+    pcall(C_QuestLog.RequestLoadQuestByID, t.id)
+  end
+  local text = scanTooltip(t.link)
+  if not text or (not text:find("\n", 1, true) and t.tries < MAX_TIP_TRIES - 1) then
+    return nil
+  end
+  return cutUtf8(table.concat({ VERSION, QUEST_CHANNEL, "", tostring(t.id), text }, SEP), MAX_PAYLOAD)
+end
+
 local function tipPayload(t)
+  if t.kind == "quest" then
+    return questPayload(t)
+  end
   local quality
   if getItemInfo then
     local ok, name, _, q = pcall(getItemInfo, t.link)
@@ -367,7 +388,7 @@ local function nextTip(now)
         t.at = now + TIP_RETRY
         tipPending[#tipPending + 1] = t
       else
-        tipSeen[t.id] = nil -- given up; a later link may try again
+        tipSeen[t.key] = nil -- given up; a later link may try again
       end
       return nil
     end
@@ -530,6 +551,7 @@ local SAMPLES = {
   { "Say", "WARRIOR", "Brunhilde", "anyone know where the trainer is?" },
   { "Guild", "SHAMAN", "Pedrinho", "bora fazer raid hoje à noite" },
   { "Party", "WARLOCK", "Schatten", "ich brauche noch Mana, kurz warten {rt1}" },
+  { "Party", "PRIEST", "Mirela", "quien hace |cffffff00|Hquest:783:1|h[A Threat Within]|h|r?" },
   { "General", "", "Volkov", "lol LFM ZG need heal" },
 }
 
