@@ -515,3 +515,13 @@ fn embedded_files_write_the_toc_last() {
 fn embedded(name: &str) -> &'static [u8] {
     wow_chat_translator::addon::files().iter().find(|(n, _)| *n == name).map(|(_, b)| *b).expect(name)
 }
+
+#[test]
+fn reinstalling_the_same_version_says_reinstalled_not_updated() {
+    let same = InstallResult::Updated { from: Some(addon::VERSION.to_string()) };
+    assert_eq!(same.message(), format!("reinstalado (ya estaba en {})", addon::VERSION));
+    // An older version still reads as an update.
+    let older = InstallResult::Updated { from: Some("0.1.0".into()) };
+    assert_eq!(older.message(), "actualizado (antes 0.1.0)");
+    assert_eq!(InstallResult::Updated { from: None }.message(), "actualizado");
+}

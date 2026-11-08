@@ -31,6 +31,8 @@ impl InstallResult {
     pub fn message(&self) -> String {
         match self {
             Self::Installed => "instalado".into(),
+            // "Reinstalar" over the same version copied the same files: not an update.
+            Self::Updated { from: Some(v) } if v == super::VERSION => format!("reinstalado (ya estaba en {v})"),
             Self::Updated { from: Some(v) } => format!("actualizado (antes {v})"),
             Self::Updated { from: None } => "actualizado".into(),
             Self::SkippedLinked { .. } => "enlazado a una copia de desarrollo: no se tocó".into(),
