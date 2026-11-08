@@ -20,7 +20,7 @@ use crate::core::prefs::{Bounds, ItemTooltips};
 use crate::core::wowhead::{panel_view, PanelView, WowheadCache, WowheadState};
 
 use super::compose::{self, copied_message, failed_message, translate_outgoing, OUT_LANGS};
-use super::messages::{badge, can_translate, flip_label, row_mode, shows_translation, BadgeKind, Mode, Row, Tab};
+use super::messages::{badge, can_translate, flip_label, panel_goes_above, row_mode, PANEL_GAP, shows_translation, BadgeKind, Mode, Row, Tab};
 use super::settings::{self, SettingsState};
 use super::shared::Shared;
 use super::style::{self, channel_label, class_color, item_quality_color, log_highlight_color, log_text_color, tab_color};
@@ -868,7 +868,7 @@ fn message_row(
                                         let resp = ui.add(egui::Label::new(RichText::new(&name).color(c)));
                                         // The row's own click area covers the text, so
                                         // hover is read from the pointer position.
-                                        if std::mem::take(&mut force) || ui.rect_contains_pointer(resp.rect) {
+                                        if std::mem::take(&mut force) || ui.ctx().pointer_hover_pos().is_some_and(|p| resp.rect.contains(p)) {
                                             link_hovered.set(true);
                                             tips.hovered(ui, link.id);
                                             if let Some(view) = view {
@@ -982,8 +982,25 @@ fn item_panel(ui: &Ui, link: &Response, name: &str, view: PanelView<'_>, fs: f32
     // A fixed width like the game's tooltip: without a minimum egui shrinks the panel to
     // its narrowest line and long lines wrap at almost every word.
     let width = (fs * 22.0).clamp(260.0, 360.0);
-    egui::Tooltip::always_open(ui.ctx().clone(), ui.layer_id(), link.id.with("item-panel"), link.rect).width(width).show(|ui| {
-        ui.set_min_width(width);
+    // Placed by hand (not egui's tooltip): above the link like the game, below only when
+    // it does not fit, and never on top of the link itself, so the pointer stays on the
+    // link and the panel cannot flicker. Not interactable: the pointer passes through.
+    let ctx = ui.ctx();
+    let id = link.id.with("item-panel");
+    let prev_height = ctx.memory(|m| m.area_rect(id)).map(|r| r.height());
+    let (pivot, pos) = if panel_goes_above(link.rect.top(), prev_height, ctx.content_rect().top()) {
+        (Align2::LEFT_BOTTOM, link.rect.left_top() - vec2(0.0, PANEL_GAP))
+    } else {
+        (Align2::LEFT_TOP, link.rect.left_bottom() + vec2(0.0, PANEL_GAP))
+    };
+    // The border takes the item's quality color, like the game.
+    let border = match &view {
+        PanelView::Tip { tip, .. } => item_quality_color(tip.quality),
+        PanelView::Message(_) => style::LINK_GOLD,
+    };
+    egui::Area::new(id).order(Order::Tooltip).pivot(pivot).fixed_pos(pos).constrain(true).interactable(false).show(ctx, |ui| {
+      Frame::popup(ui.style()).stroke(Stroke::new(1.5_f32, border)).show(ui, |ui| {
+        ui.set_width(width);
         ui.spacing_mut().item_spacing.y = 3.0;
         let (tip, note) = match view {
             PanelView::Tip { tip, note } => (tip, note),
@@ -1017,6 +1034,7 @@ fn item_panel(ui: &Ui, link: &Response, name: &str, view: PanelView<'_>, fs: f32
             ui.add_space(2.0);
             ui.label(RichText::new(note).size(size * 0.78).color(style::DIM));
         }
+      });
     });
 }
 

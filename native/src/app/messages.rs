@@ -209,6 +209,15 @@ pub fn flip_label(item: &OverlayItem, mode: Mode) -> Option<&'static str> {
     Some(if shows_translation(item, mode) { "Ver original" } else { "Ver traducción" })
 }
 
+/// Gap between an item link and its panel.
+pub const PANEL_GAP: f32 = 4.0;
+
+/// The item panel opens above its link, like the game's chat tooltips, unless its height
+/// (known from the previous frame) does not fit between the link and the window top.
+pub fn panel_goes_above(link_top: f32, panel_height: Option<f32>, screen_top: f32) -> bool {
+    panel_height.is_none_or(|h| link_top - PANEL_GAP - h >= screen_top)
+}
+
 /// Paused and failed messages can be translated with a click.
 pub fn can_translate(item: &OverlayItem) -> bool {
     matches!(item.status, Status::Paused | Status::Error)

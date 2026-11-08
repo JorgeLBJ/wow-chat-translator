@@ -3,7 +3,7 @@
 
 use wow_chat_translator::app::debug_log::{iso_utc, DebugLog};
 use wow_chat_translator::app::game_watcher::{GameChange, GameWatcher};
-use wow_chat_translator::app::messages::{badge, can_translate, flip_label, row_mode, shows_translation, BadgeKind, MessageList, Mode, Tab, MAX_ITEMS};
+use wow_chat_translator::app::messages::{badge, can_translate, flip_label, panel_goes_above, row_mode, shows_translation, BadgeKind, MessageList, Mode, Tab, MAX_ITEMS};
 use wow_chat_translator::app::presence::PresenceGate;
 use wow_chat_translator::app::style::{channel_label, class_color, hhmm, item_quality_color, log_highlight_color, log_text_color, tab_color, translator_label, ReaderState, LINK_GOLD};
 use wow_chat_translator::core::pipeline::{ItemPatch, OverlayItem, Status, UiEvent};
@@ -801,4 +801,15 @@ fn log_lines_use_the_game_chat_colors() {
     assert_eq!(hex("Trade"), None);
     assert_eq!(log_highlight_color(wow_chat_translator::core::channels::Highlight::Good).to_hex(), "#40ff40ff");
     assert_eq!(log_highlight_color(wow_chat_translator::core::channels::Highlight::Bad).to_hex(), "#ff4040ff");
+}
+
+#[test]
+fn the_item_panel_opens_above_the_link_unless_it_does_not_fit() {
+    // Like the game: upwards from the chat line.
+    assert!(panel_goes_above(400.0, Some(250.0), 0.0));
+    // Size not known yet (first frame): above.
+    assert!(panel_goes_above(400.0, None, 0.0));
+    // Not enough room above the link: below.
+    assert!(!panel_goes_above(120.0, Some(250.0), 0.0));
+    assert!(!panel_goes_above(300.0, Some(250.0), 100.0));
 }
