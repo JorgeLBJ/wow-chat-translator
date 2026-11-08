@@ -114,6 +114,20 @@ fn bundled_version_is_the_toc_version() {
 }
 
 #[test]
+fn app_addon_and_installer_share_one_version_number() {
+    // One number for everything: the app (Cargo.toml), the bundled addon (.toc) and the
+    // installer (.iss AppVersion). Bump all three together.
+    let app = env!("CARGO_PKG_VERSION");
+    assert_eq!(addon::VERSION, app, "addon .toc ## Version must equal Cargo.toml version");
+    let iss = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../installer/wow-chat-translator.iss")).unwrap();
+    let installer = iss
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("#define AppVersion "))
+        .map(|v| v.trim().trim_matches('"').to_string());
+    assert_eq!(installer.as_deref(), Some(app), "installer AppVersion must equal Cargo.toml version");
+}
+
+#[test]
 fn toc_lists_wow_forever_classic_era_and_mists_classic() {
     let toc = std::str::from_utf8(embedded("WoWChatTranslator.toc")).unwrap();
     let line = toc.lines().find(|l| l.starts_with("## Interface:")).unwrap();
