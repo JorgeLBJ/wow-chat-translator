@@ -336,6 +336,19 @@ fn translation_is_shown_only_in_translated_mode_when_present() {
 }
 
 #[test]
+fn the_fallback_tooltip_says_which_translator_was_used_and_why() {
+    let mut it = item(1, None);
+    it.status = Status::Done;
+    it.lang = Some("en".into());
+    it.translated = Some("hola".into());
+    it.provider = Some("Google".into());
+    it.fallback_reason = Some("LLM: empty reply".into());
+    assert_eq!(badge(&it, true).unwrap().tip.as_deref(), Some("Traducido con Google porque el LLM falló: LLM: empty reply"));
+    it.fallback_reason = None;
+    assert_eq!(badge(&it, true).unwrap().tip.as_deref(), Some("Google"), "no fallback: unchanged");
+}
+
+#[test]
 fn a_flipped_row_shows_the_other_text_and_its_menu_entry_names_it() {
     let mut it = item(1, None);
     // Nothing to flip without a translation (log lines, Spanish, not translated yet).

@@ -240,7 +240,7 @@ pub fn badge(item: &OverlayItem, show_translated: bool) -> Option<Badge> {
         Status::Paused => Some(Badge { text: "⏸ traducir".into(), kind: BadgeKind::Paused, tip: None }),
         _ => {
             let tip = item.provider.as_ref().map(|p| match &item.fallback_reason {
-                Some(reason) => format!("{p} (LLM falló: {reason})"),
+                Some(reason) => format!("Traducido con {p} porque el LLM falló: {reason}"),
                 None => p.clone(),
             });
             match &item.lang {

@@ -234,7 +234,10 @@ fn openai_posts_a_chat_completion_with_model_key_and_target_language() {
     let body = call.json();
     assert_eq!(body["model"], "m/x");
     assert_eq!(body["temperature"], 0.2);
-    assert_eq!(body["max_tokens"], 400);
+    // Room for the answer even when the model reasons first.
+    assert_eq!(body["max_tokens"], 1500);
+    // OpenRouter: ask the model not to reason (a translation needs none).
+    assert_eq!(body["reasoning"], serde_json::json!({"enabled": false}));
     assert_eq!(body["messages"][0]["role"], "system");
     assert!(body["messages"][0]["content"].as_str().unwrap().contains("Spanish"));
     assert_eq!(body["messages"][1]["role"], "user");
@@ -251,6 +254,41 @@ fn openai_omits_the_authorization_header_when_no_key_is_set() {
         .translate("hi", "es")
         .unwrap();
     assert_eq!(http.calls()[0].header("Authorization"), None);
+}
+
+#[test]
+fn openai_sends_no_reasoning_field_to_other_servers() {
+    let http = chat_reply("LANG: en
+TEXT: hola");
+    OpenAICompatibleTranslator::new(http.clone(), "http://localhost:1234/v1", None, "local").translate("hi", "es").unwrap();
+    assert!(http.calls()[0].json().get("reasoning").is_none());
+}
+
+#[test]
+fn openai_retries_with_low_effort_when_openrouter_says_reasoning_is_mandatory() {
+    let mandatory = r#"{"error":{"code":400,"message":"Reasoning is mandatory for this endpoint and cannot be disabled."}}"#;
+    let http = FakeHttp::new(vec![
+        Ok(HttpResponse { status: 400, body: mandatory.into() }),
+        Ok(HttpResponse { status: 200, body: serde_json::json!({"choices": [{"message": {"content": "LANG: en
+TEXT: hola"}}]}).to_string() }),
+    ]);
+    let tr = OpenAICompatibleTranslator::new(http.clone(), "https://openrouter.ai/api/v1", Some("k".into()), "m/x");
+    assert_eq!(tr.translate("hi", "es").unwrap(), ok("hola", "en"));
+    let calls = http.calls();
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[1].json()["reasoning"], serde_json::json!({"effort": "low"}));
+    // Any other 400 is an error, without a retry.
+    let http = FakeHttp::new(vec![Ok(HttpResponse { status: 400, body: "bad model".into() })]);
+    let err = OpenAICompatibleTranslator::new(http.clone(), "https://openrouter.ai/api/v1", None, "m").translate("hi", "es").unwrap_err();
+    assert_eq!(err, "LLM HTTP 400: bad model");
+    assert_eq!(http.calls().len(), 1);
+}
+
+#[test]
+fn openai_says_when_the_reply_was_cut_by_the_token_limit() {
+    let http = FakeHttp::json(200, serde_json::json!({"choices": [{"message": {"content": ""}, "finish_reason": "length"}]}));
+    let err = OpenAICompatibleTranslator::new(http, "http://x/v1", None, "m").translate("hi", "es").unwrap_err();
+    assert_eq!(err, "LLM: la respuesta se cortó (el modelo agotó los tokens, quizá razonando)");
 }
 
 #[test]
